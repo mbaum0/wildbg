@@ -212,6 +212,9 @@ pub extern "C" fn probabilities(wildbg: &Wildbg, pips: &[c_int; 26]) -> CProbabi
 
 #[cfg(test)]
 mod tests {
+
+    use engine::{dice::Dice, pos};
+    use engine::position::X_BAR;
     use crate::CProbabilities;
 
     #[test]
@@ -231,5 +234,46 @@ mod tests {
         assert_eq!(c_probs.win_bg, 0.12);
         assert_eq!(c_probs.lose_g, 0.15);
         assert_eq!(c_probs.lose_bg, 0.05);
+    }
+
+    #[test]
+    fn from_bgmove_mixed_dice() {
+        let old = pos!(x 24:2, 13:5, 8:3, 6:5; o 19:5, 17:3, 12:5, 1:2);
+        let new = pos!(x 23: 1, 22:1, 13:5, 8:3, 6:5; o 19:5, 17:3, 12:5, 1:2); 
+        let dice = Dice::new(2, 1);
+        let bg_move = logic::bg_move::BgMove::new(&old, &new, &dice);
+        let c_move = crate::CMove::from(bg_move);
+        assert_eq!(c_move.move_count, 2);
+        assert_eq!(c_move.moves[0].from, 24);
+        assert_eq!(c_move.moves[0].to, 22);
+        assert_eq!(c_move.moves[1].from, 24);
+        assert_eq!(c_move.moves[1].to, 23);
+    }
+
+    #[test]
+    fn from_bgmove_double_dice(){
+        let old = pos!(x 24:2, 13:5, 8:3, 6:5; o 19:5, 17:3, 12:5, 1:2);
+        let new = pos!(x 18:2, 13:3, 7:2, 8:3, 6:5; o 19:5, 17:3, 12:5, 1:2); 
+        let dice = Dice::new(6, 6);
+        let bg_move = logic::bg_move::BgMove::new(&old, &new, &dice);
+        let c_move = crate::CMove::from(bg_move);
+        assert_eq!(c_move.move_count, 4);
+        assert_eq!(c_move.moves[0].from, 24);
+        assert_eq!(c_move.moves[0].to, 18);
+        assert_eq!(c_move.moves[1].from, 24);
+        assert_eq!(c_move.moves[1].to, 18);
+        assert_eq!(c_move.moves[2].from, 13);
+        assert_eq!(c_move.moves[2].to, 7);
+        assert_eq!(c_move.moves[3].from, 13);
+        assert_eq!(c_move.moves[3].to, 7);
+    }
+
+    #[test]
+    fn from_bgmove_nomoves(){
+        let pos = pos!(x X_BAR:15; o 24:3, 23:3, 22:3, 21:2, 20: 2, 19: 2);
+        let dice = Dice::new(1, 1);
+        let bg_move = logic::bg_move::BgMove::new(&pos, &pos, &dice);
+        let c_move = crate::CMove::from(bg_move);
+        assert_eq!(c_move.move_count, 0);
     }
 }

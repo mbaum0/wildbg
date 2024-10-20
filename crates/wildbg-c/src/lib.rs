@@ -229,10 +229,10 @@ pub extern "C" fn possible_moves(wildbg: &Wildbg, pips: &[c_int; 26], die1: c_ui
             let c_moves: Vec<CMove> = bg_moves.into_iter().map(CMove::from).collect();
             let length = c_moves.len();
             let moves_boxed_slice = c_moves.into_boxed_slice();
-            let fat_ptr = Box::into_raw(moves_boxed_slice);
-            let slim_ptr = fat_ptr as _;
+            // let fat_ptr = Box::into_raw(moves_boxed_slice);
+            // let slim_ptr = fat_ptr as _;
             let arr = CMoveArray {
-                moves: slim_ptr,
+                moves: moves_boxed_slice.as_ptr(),
                 length,
             };
             Box::into_raw(Box::new(arr))
@@ -251,7 +251,10 @@ pub extern "C" fn possible_moves(wildbg: &Wildbg, pips: &[c_int; 26], die1: c_ui
 #[no_mangle]
 pub extern "C" fn free_cmove_array(ptr: *mut CMoveArray) {
     unsafe {
-        drop(Box::from_raw(ptr));
+        let data = Box::from_raw(ptr);
+        let move_ptr = data.moves as *mut CMove;
+        let _ = Vec::from_raw_parts(move_ptr, data.length, data.length);
+        // The struct `data` itself gets dropped here when the Box goes out of scope
     }
 }
 

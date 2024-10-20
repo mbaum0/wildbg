@@ -37,6 +37,11 @@ impl<T: Evaluator> WildbgApi<T> {
         let new_position = self.evaluator.best_position(position, dice, value);
         BgMove::new(position, &new_position.sides_switched(), dice)
     }
+
+    pub fn possible_moves (&self, position: &Position, dice: &Dice) -> Vec<BgMove> {
+        let positions = position.all_positions_after_moving(dice);
+        positions.into_iter().map(|new_pos| BgMove::new(position, &new_pos.sides_switched(), dice)).collect()
+    }
 }
 
 #[cfg(test)]
@@ -112,5 +117,48 @@ mod tests {
             details: vec![MoveDetail { from: 7, to: 3 }, MoveDetail { from: 7, to: 5 }],
         };
         assert_eq!(bg_move, expected_move);
+    }
+
+    #[test]
+    fn possible_moves_mixed_dice() {
+        // Given
+        let given_pos = pos!(x 24:2; o 1:2);
+        let evaluator = EvaluatorFake {};
+        let api = WildbgApi { evaluator };
+        // When
+        let moves = api.possible_moves(&given_pos, &Dice::new(1, 2));
+        // Then
+        let expected_moves = vec![
+            BgMove {
+                details: vec![MoveDetail { from: 24, to: 22 }, MoveDetail { from: 24, to: 23 }],
+            },
+            BgMove {
+                details: vec![MoveDetail { from: 24, to: 23 }, MoveDetail { from: 23, to: 21 }],
+            },
+        ];
+        assert_eq!(moves, expected_moves);
+    }
+
+    #[test]
+    fn possible_moves_double_dice(){
+        // Given
+        let given_pos = pos!(x 24:2; o 1:2);
+        let evaluator = EvaluatorFake {};
+        let api = WildbgApi { evaluator };
+        // When
+        let moves = api.possible_moves(&given_pos, &Dice::new(2, 2));
+        // Then
+        let expected_moves = vec![
+            BgMove {
+                details: vec![MoveDetail { from: 24, to: 22 }, MoveDetail { from: 22, to: 20 }, MoveDetail { from: 20, to: 18 }, MoveDetail { from: 18, to: 16 }],
+            },
+            BgMove {
+                details: vec![MoveDetail { from: 24, to: 22 }, MoveDetail { from: 24, to: 22 }, MoveDetail { from: 22, to: 20 }, MoveDetail { from: 20, to: 18 }],
+            },
+            BgMove {
+                details: vec![MoveDetail { from: 24, to: 22 }, MoveDetail { from: 24, to: 22 }, MoveDetail { from: 22, to: 20 }, MoveDetail { from: 22, to: 20 }]
+            }
+        ];
+        assert_eq!(moves, expected_moves);
     }
 }

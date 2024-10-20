@@ -70,6 +70,11 @@ typedef struct CProbabilities {
   float lose_bg;
 } CProbabilities;
 
+typedef struct CMoveArray {
+  const struct CMove *moves;
+  uintptr_t length;
+} CMoveArray;
+
 /**
  * Loads the neural nets into memory and returns a pointer to the API.
  * Returns `NULL` if the neural nets cannot be found.
@@ -109,3 +114,10 @@ struct CMove best_move(const struct Wildbg *wildbg,
  */
 struct CProbabilities probabilities(const struct Wildbg *wildbg,
                                     const int (*pips)[26]);
+
+struct CMoveArray *possible_moves(const struct Wildbg *wildbg,
+                                  const int (*pips)[26],
+                                  unsigned int die1,
+                                  unsigned int die2);
+
+void free_cmove_array(struct CMoveArray *ptr);

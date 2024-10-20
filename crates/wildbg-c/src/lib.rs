@@ -148,6 +148,21 @@ impl From<&MoveDetail> for CMoveDetail {
     }
 }
 
+#[repr(C)]
+pub struct CMoveArray {
+    moves: *const CMove,
+    length: usize,
+}
+
+impl Default for CMoveArray {
+    fn default() -> Self {
+        Self {
+            moves: std::ptr::null(),
+            length: 0,
+        }
+    }
+}
+
 type Error = &'static str;
 
 /// Returns the best move for the given position.
@@ -199,13 +214,53 @@ pub extern "C" fn probabilities(wildbg: &Wildbg, pips: &[c_int; 26]) -> CProbabi
     }
 }
 
+#[no_mangle]
+pub extern "C" fn possible_moves(wildbg: &Wildbg, pips: &[c_int; 26], die1: c_uint, die2: c_uint) -> *mut CMoveArray {
+    let pips = pips.map(|pip| pip as i8);
+    let move_result = || -> Result<Vec<BgMove>, Error> {
+        let position = Position::try_from(pips)?;
+        let dice = Dice::try_from((die1 as usize, die2 as usize))?;
+        let bg_moves = wildbg.api.possible_moves(&position, &dice);
+        Ok(bg_moves)
+    };
+    match move_result(){
+        Ok(bg_moves) => {
+            // We need to convert the Vec<BgMove> into a Vec<CMove>.
+            let c_moves: Vec<CMove> = bg_moves.into_iter().map(CMove::from).collect();
+            let length = c_moves.len();
+            let moves_boxed_slice = c_moves.into_boxed_slice();
+            let fat_ptr = Box::into_raw(moves_boxed_slice);
+            let slim_ptr = fat_ptr as _;
+            let arr = CMoveArray {
+                moves: slim_ptr,
+                length,
+            };
+            Box::into_raw(Box::new(arr))
+        },
+        Err(error) => {
+            eprintln!("{}", error);
+            let arr = CMoveArray {
+                moves: std::ptr::null(),
+                length: 0,
+            };
+            Box::into_raw(Box::new(arr))
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn free_cmove_array(ptr: *mut CMoveArray) {
+    unsafe {
+        drop(Box::from_raw(ptr));
+    }
+}
+
 #[cfg(test)]
 mod tests {
 
     use crate::CProbabilities;
     use engine::position::X_BAR;
     use engine::{dice::Dice, pos};
-
     #[test]
     fn from_probabilities() {
         let model_probs = engine::probabilities::Probabilities {

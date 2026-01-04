@@ -26,6 +26,7 @@ This means you can reuse the same neural networks between for example 0.2.0 and 
 
 - Finding positions for training new nets is based on weaknesses of the older nets.
 - Training data generation can be suspended and resumed.
+- Finding the best neural net by running a multi-arm-bandit inspired competition using UCB.
 
 ## 0.3.0 - 2025-08-06
 

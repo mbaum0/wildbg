@@ -90,6 +90,15 @@ impl CompositeEvaluator {
             race_evaluator,
         })
     }
+
+    pub fn from_file_paths(contact_path: &str, race_path: &str) -> Result<Self, Error> {
+        let contact_evaluator = OnnxEvaluator::from_file_path(contact_path, ContactInputsGen {})?;
+        let race_evaluator = OnnxEvaluator::from_file_path(race_path, RaceInputsGen {})?;
+        Ok(Self {
+            contact_evaluator,
+            race_evaluator,
+        })
+    }
 }
 
 #[cfg(test)]

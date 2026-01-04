@@ -63,7 +63,7 @@ fn main() {
         let probabilities = Probabilities::from(&global_counter);
         let better_evaluator = if probabilities.equity() > 0.0 { 1 } else { 2 };
         print!(
-            "\rEvaluator {} is leading. After {:.1} thousand games the equity is {:.3}. {:?}",
+            "\rEvaluator {} is leading. After {:.1} thousand games the equity is {:.4}. {:?}",
             better_evaluator,
             global_counter.sum() as f32 / 1000.0,
             probabilities.equity(),

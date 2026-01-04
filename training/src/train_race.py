@@ -72,9 +72,12 @@ def train(model: Model):
     # we add softmax later when we save the model to the disk.
     # CrossEntropyLoss supports soft probability labels in PyTorch 2.x
     criterion = nn.CrossEntropyLoss()
-    optimizer = optim.AdamW(model.parameters(), lr=1e-4, weight_decay=1e-2)
+    optimizer = optim.SGD(model.parameters(), lr=0.05, momentum=0.9, weight_decay=0, nesterov=True)
 
     model = model.to(device)
+
+    # Learning rate scheduler - cosine annealing with warm restarts every 10 epochs
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=10, T_mult=2)
 
     for epoch in range(300):
         epoch_loss = 0.0
@@ -90,6 +93,9 @@ def train(model: Model):
             # optimize
             optimizer.step()
             epoch_loss += loss.item()
+
+        # Step the learning rate scheduler
+        scheduler.step()
 
         epoch_loss /= len(train_loader) / 64
 

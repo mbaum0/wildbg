@@ -1,8 +1,9 @@
 from pathlib import Path
 import torch
 from torch import nn, optim
+from torch.utils.data import DataLoader
 
-from helper import train, Model
+from helper import Model, save_model, WildBgDataSet
 
 
 class TinyRaceModel(Model):
@@ -24,9 +25,6 @@ class TinyRaceModel(Model):
         x = self.activation(x)
         x = self.output(x)
         return x
-
-    def optimizer(self):
-        return optim.AdamW(self.parameters(), lr=1e-4, weight_decay=1e-2)
 
 
 class RaceModel(Model):
@@ -61,6 +59,48 @@ class RaceModel(Model):
         return optim.AdamW(self.parameters(), lr=1e-4, weight_decay=1e-2)
 
 
+def train(model: Model):
+    # Import rollout data
+    rollout_data = WildBgDataSet("./training-data/race-inputs.csv")
+    train_loader = DataLoader(rollout_data, batch_size=64, shuffle=True)
+
+    # "mps" takes more time than "cpu" on Macs, so let's ignore it for now.
+    device = "cpu"
+    print(f"Using {device} device")
+
+    # CrossEntropyLoss is the best for a multi-class classifier. The model has only logits as outputs,
+    # we add softmax later when we save the model to the disk.
+    # CrossEntropyLoss supports soft probability labels in PyTorch 2.x
+    criterion = nn.CrossEntropyLoss()
+    optimizer = optim.AdamW(model.parameters(), lr=1e-4, weight_decay=1e-2)
+
+    model = model.to(device)
+
+    for epoch in range(300):
+        epoch_loss = 0.0
+        for i, data in enumerate(train_loader, 0):
+            inputs, labels = data
+            # set optimizer to zero grad to remove previous epoch gradients
+            optimizer.zero_grad()
+            # forward propagation
+            outputs = model(inputs)
+            loss = criterion(outputs, labels)
+            # backward propagation
+            loss.backward()
+            # optimize
+            optimizer.step()
+            epoch_loss += loss.item()
+
+        epoch_loss /= len(train_loader) / 64
+
+        epoch_plus_one = epoch + 1
+        print(f'[Epoch: {epoch_plus_one}] loss: {epoch_loss:.5f}')
+
+        if epoch_plus_one > 4:
+            # Save epochs for each iteration after the first couple of epochs have passed
+            save_model(model, "./training-data/race" + f"{epoch_plus_one:03}" + ".onnx")
+
+
 def main():
     # Make the training process deterministic
     torch.manual_seed(0)
@@ -71,7 +111,7 @@ def main():
     # If you want to train a tiny model, change the following line:
     # model = TinyRaceModel()
     model = RaceModel()
-    train(model, path + "race-inputs.csv", path + "race")
+    train(model)
 
     print('Finished Training')
 

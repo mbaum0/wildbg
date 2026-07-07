@@ -73,6 +73,9 @@ typedef struct CProbabilities {
 typedef struct CCubeInfo {
   bool should_double;
   bool should_accept;
+  float cubeless_equity;
+  float equity_no_double;
+  float equity_double_take;
 } CCubeInfo;
 
 /**

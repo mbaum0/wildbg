@@ -18,6 +18,10 @@ A graphical user interface (GUI) is not part of this project.
 
 ### Bots on Backgammon Servers
 
+#### kutuama.com
+
+Click the play vs bot button and enjoy the wildbg bot at https://kutuama.com. No need to download a client or register.
+
 #### bgammon.org
 
 Thanks to [@tslocum](https://github.com/tslocum) you can play against `BOT_wildbg` on his new backgammon server https://bgammon.org.
@@ -38,23 +42,34 @@ Thanks to [@oysteijo](https://github.com/oysteijo) you can play against `wildbg`
 
 #### Online
 
-You can access the API and see yourself how `wildbg` would move: https://wildbg-pwuo.shuttle.app/swagger-ui/
+You can access the API and see yourself how `wildbg` would move: http://46.224.159.43/swagger-ui/
 
 An example for the starting position and rolling 3 and 1:
-https://wildbg-pwuo.shuttle.app/move?die1=3&die2=1&p24=2&p19=-5&p17=-3&p13=5&p12=-5&p8=3&p6=5&p1=-2
+http://46.224.159.43/move?die1=3&die2=1&p24=2&p19=-5&p17=-3&p13=5&p12=-5&p8=3&p6=5&p1=-2
 
 #### Locally
 
 Install Rust on your machine and then execute `cargo run` or `cargo run --release`.
 A web server will be started which you can access via http://localhost:8080/swagger-ui/
 
-Beware that the networks committed to this repository are very small networks just for demonstration purposes.
-You can find the latest training progress and networks here: https://github.com/carsten-wenderdel/wildbg-training
+Beware that the networks committed to the main branch of this repository (in [./neural-nets/](./neural-nets/)) are
+very small networks just for demonstration purposes.
+For using the latest and strongest networks, switch to the branch [nets](https://github.com/carsten-wenderdel/wildbg/tree/nets).
+Alternatively, you can find the training progress and various networks here: https://github.com/carsten-wenderdel/wildbg-training
+
+#### Docker
+
+Instead of installing Rust, you can also use Docker:
+```
+docker build -t wildbg .
+docker run -p 8082:8082 wildbg
+```
+
 
 ## Documentation
 
 #### For users (bots and GUIs)
-- HTTP API: https://wildbg.shuttleapp.rs/swagger-ui/
+- HTTP API: http://46.224.159.43/swagger-ui/
 - C API: [docs/user/wildbg-c.md](docs/user/wildbg-c.md)
 
 #### For contributors
@@ -70,8 +85,6 @@ This project is inspired and influenced by other backgammon engines:
 
 - [TD-Gammon](https://bkgm.com/articles/authors.html#tesauro_gerald) by Gerald Tesauro brought the idea of using neural networks to backgammon
 - [GnuBG](https://www.gnu.org/software/gnubg/) - The strongest open source backgammon engine
-
-Thanks to JetBrains for providing a free license for their IDEs via their [Open Source Support Program](https://jb.gg/OpenSourceSupport).
 
 ## Contributing
 

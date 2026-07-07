@@ -58,7 +58,7 @@ pub enum GameState {
     GameOver(GameResult),
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum OngoingPhase {
     Contact,
     Race,
@@ -272,34 +272,33 @@ impl fmt::Debug for Position {
 /// Private helper methods
 impl Position {
     /// Only call if this move is legal.
-    fn move_single_checker(&mut self, from: usize, die: usize) {
-        self.pips[from] -= 1;
+    fn clone_and_move_single_checker(&self, from: usize, die: usize) -> Position {
+        let mut position = *self;
+        position.pips[from] -= 1;
         if from > die {
-            if self.pips[from - die] == -1 {
+            if position.pips[from - die] == -1 {
                 // hit opponent
-                self.pips[from - die] = 1;
-                self.pips[O_BAR] -= 1;
+                position.pips[from - die] = 1;
+                position.pips[O_BAR] -= 1;
             } else {
                 // mixed move
-                self.pips[from - die] += 1;
+                position.pips[from - die] += 1;
             }
         } else {
             // bear off
-            self.x_off += 1;
+            position.x_off += 1;
         }
-    }
-
-    /// Only call if this move is legal.
-    fn clone_and_move_single_checker(&self, from: usize, die: usize) -> Position {
-        let mut new = *self;
-        new.move_single_checker(from, die);
-        new
+        position
     }
 
     #[inline]
-    fn can_move_internally(&self, from: usize, die: usize) -> bool {
+    /// Works for all of moves, including those from the bar
+    fn can_move(&self, from: usize, die: usize) -> bool {
         if self.pips[from] < 1 {
             // no checker to move
+            false
+        } else if (from == X_BAR) != (self.pips[X_BAR] > 0) {
+            // either trying to move from the bar without pieces there or to move elsewhere while still pieces on the bar
             false
         } else if from > die {
             // mixed move, no bear off
@@ -313,15 +312,6 @@ impl Position {
             // from < die, bear off
             let checker_on_bigger_pip = self.pips[from + 1..X_BAR].iter().any(|x| x > &0);
             !checker_on_bigger_pip
-        }
-    }
-
-    /// Works for all of moves, including those from the bar
-    fn can_move(&self, from: usize, die: usize) -> bool {
-        if (from == X_BAR) == (self.pips[X_BAR] > 0) {
-            self.can_move_internally(from, die)
-        } else {
-            false
         }
     }
 
@@ -733,7 +723,7 @@ mod tests {
 #[cfg(test)]
 mod private_tests {
     use crate::pos;
-    use crate::position::{Position, O_BAR, STARTING};
+    use crate::position::{O_BAR, Position, STARTING, X_BAR};
     use std::collections::HashMap;
 
     #[test]
@@ -803,6 +793,12 @@ mod private_tests {
     fn can_move_will_land_on_checkers() {
         let given = pos!(x 4:10; o 2:1);
         assert!(given.can_move(4, 2));
+    }
+
+    #[test]
+    fn cannot_move_while_still_pieces_on_bar() {
+        let given = pos!(x X_BAR:1, 4:10, 10:2; o);
+        assert!(!given.can_move(4, 2));
     }
 
     #[test]

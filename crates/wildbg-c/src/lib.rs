@@ -5,12 +5,10 @@ use engine::position::Position;
 use engine::probabilities::Probabilities;
 use logic::bg_move::{BgMove, MoveDetail};
 use logic::cube::CubeInfo;
-use logic::wildbg_api::{WildbgApi, WildbgConfig};
+use logic::wildbg_api::{ScoreConfig, WildbgApi};
 
 // When this file is changed, recreate the header file by executing this from the project's root:
-// touch cbindgen.toml
-// cbindgen --config cbindgen.toml --crate wildbg-c --output crates/wildbg-c/wildbg.h --lang c
-// rm cbindgen.toml
+// cbindgen --config crates/wildbg-c/cbindgen.toml  --crate wildbg-c --output crates/wildbg-c/wildbg.h --lang c
 
 // For more infos about Rust -> C see
 // https://docs.rust-embedded.org/book/interoperability/rust-with-c.html
@@ -33,19 +31,7 @@ pub struct BgConfig {
     pub o_away: c_uint,
 }
 
-impl From<&BgConfig> for WildbgConfig {
-    fn from(value: &BgConfig) -> Self {
-        if value.x_away == 0 && value.o_away == 0 {
-            Self { away: None }
-        } else {
-            Self {
-                away: Some((value.x_away, value.o_away)),
-            }
-        }
-    }
-}
-
-#[no_mangle]
+#[unsafe(no_mangle)]
 /// Loads the neural nets into memory and returns a pointer to the API.
 /// Returns `NULL` if the neural nets cannot be found.
 ///
@@ -60,7 +46,7 @@ pub extern "C" fn wildbg_new() -> *mut Wildbg {
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 /// # Safety
 ///
 /// Frees the memory of the argument.
@@ -105,10 +91,10 @@ impl From<&Probabilities> for CProbabilities {
 ///
 /// If the same checker is moved twice, this is encoded in two details.
 #[repr(C)]
-#[derive(Default)]
+#[derive(Debug, Default, PartialEq)]
 pub struct CMove {
-    details: [CMoveDetail; 4],
-    detail_count: c_int,
+    pub details: [CMoveDetail; 4],
+    pub detail_count: c_int,
 }
 
 impl From<BgMove> for CMove {
@@ -129,6 +115,7 @@ impl From<BgMove> for CMove {
 /// `to` is an integer between 24 and 0.
 /// `from - to` is then at least 1 and at most 6.
 #[repr(C)]
+#[derive(Debug, PartialEq)]
 pub struct CMoveDetail {
     from: c_int,
     to: c_int,
@@ -178,9 +165,13 @@ type Error = &'static str;
 /// The player on turn always moves from pip 24 to pip 1.
 /// The array `pips` contains the player's bar in index 25, the opponent's bar in index 0.
 /// Checkers of the player on turn are encoded with positive integers, the opponent's checkers with negative integers.
-#[no_mangle]
-pub extern "C" fn best_move(
-    wildbg: &Wildbg,
+///
+/// # Safety
+/// The argument `wildbg` needs to be initialized with `wildbg_new()` and `wildbg_free()` must not be called yet.
+/// Otherwise we have random memory access here.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn best_move(
+    wildbg: *const Wildbg,
     pips: &[c_int; 26],
     die1: c_uint,
     die2: c_uint,
@@ -190,10 +181,11 @@ pub extern "C" fn best_move(
     let move_result = || -> Result<BgMove, Error> {
         let position = Position::try_from(pips)?;
         let dice = Dice::try_from((die1 as usize, die2 as usize))?;
-        let bg_move = wildbg
-            .api
-            .best_move(&position, &dice, &WildbgConfig::from(config));
-        Ok(bg_move)
+        let score_config = ScoreConfig::try_from((config.x_away, config.o_away))?;
+        unsafe {
+            let bg_move = (*wildbg).api.best_move(&position, &dice, &score_config);
+            Ok(bg_move)
+        }
     };
     match move_result() {
         Ok(bg_move) => CMove::from(bg_move),
@@ -210,7 +202,7 @@ pub extern "C" fn best_move(
 /// The player on turn always moves from pip 24 to pip 1.
 /// The array `pips` contains the player's bar in index 25, the opponent's bar in index 0.
 /// Checkers of the player on turn are encoded with positive integers, the opponent's checkers with negative integers.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn probabilities(wildbg: &Wildbg, pips: &[c_int; 26]) -> CProbabilities {
     let pips = pips.map(|pip| pip as i8);
     match Position::try_from(pips) {
@@ -222,7 +214,7 @@ pub extern "C" fn probabilities(wildbg: &Wildbg, pips: &[c_int; 26]) -> CProbabi
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn cube_info(wildbg: &Wildbg, pips: &[c_int; 26]) -> CCubeInfo {
     let pips = pips.map(|pip| pip as i8);
     match Position::try_from(pips) {
@@ -236,8 +228,7 @@ pub extern "C" fn cube_info(wildbg: &Wildbg, pips: &[c_int; 26]) -> CCubeInfo {
 
 #[cfg(test)]
 mod tests {
-
-    use crate::{CCubeInfo, CProbabilities};
+    use crate::{BgConfig, CCubeInfo, CMove, CMoveDetail, CProbabilities, best_move, wildbg_new};
     use engine::position::X_BAR;
     use engine::{dice::Dice, pos};
     use logic::cube::CubeInfo;
@@ -319,5 +310,52 @@ mod tests {
         let bg_move = logic::bg_move::BgMove::new(&pos, &pos, &dice);
         let c_move = crate::CMove::from(bg_move);
         assert_eq!(c_move.detail_count, 0);
+    }
+
+    #[test]
+    fn player_runs_in_money_game_but_not_in_1ptr() {
+        // Given
+        let wildbg = wildbg_new();
+        let pips = [
+            0, 2, 2, 2, 2, 2, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, -2, -2, 0, 0, 0, 0, 1, 0,
+        ];
+        let die1 = 5;
+        let die2 = 4;
+
+        let running = CMove {
+            details: [
+                CMoveDetail { from: 24, to: 20 },
+                CMoveDetail { from: 20, to: 15 },
+                CMoveDetail::default(),
+                CMoveDetail::default(),
+            ],
+            detail_count: 2,
+        };
+
+        // When
+        let config = BgConfig {
+            x_away: 1,
+            o_away: 1,
+        };
+
+        // Then
+        // In 1-pointers we don't run to increase the small chance of winning.
+        unsafe {
+            let best_move = best_move(wildbg, &pips, die1, die2, &config);
+            assert_ne!(best_move, running);
+        }
+
+        // And when
+        let config = BgConfig {
+            x_away: 0,
+            o_away: 0,
+        };
+
+        // Then
+        // In money games we run to avoid gammon/bg.
+        unsafe {
+            let best_move = best_move(wildbg, &pips, die1, die2, &config);
+            assert_eq!(best_move, running);
+        }
     }
 }

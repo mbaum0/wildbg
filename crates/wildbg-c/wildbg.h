@@ -1,7 +1,9 @@
 #include <stdarg.h>
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <stdlib.h>
+
 
 typedef struct Wildbg Wildbg;
 
@@ -47,6 +49,14 @@ typedef struct BgConfig {
   unsigned int o_away;
 } BgConfig;
 
+typedef struct CCubeInfo {
+  bool should_double;
+  bool should_accept;
+  float cubeless_equity;
+  float equity_no_double;
+  float equity_double_take;
+} CCubeInfo;
+
 typedef struct CProbabilities {
   /**
    * Cubeless probability to win the game. This includes gammons and backgammons.
@@ -70,42 +80,24 @@ typedef struct CProbabilities {
   float lose_bg;
 } CProbabilities;
 
-typedef struct CCubeInfo {
-  bool should_double;
-  bool should_accept;
-  float cubeless_equity;
-  float equity_no_double;
-  float equity_double_take;
-} CCubeInfo;
-
-/**
- * Loads the neural nets into memory and returns a pointer to the API.
- * Returns `NULL` if the neural nets cannot be found.
- *
- * To free the memory after usage, call `wildbg_free`.
- */
-struct Wildbg *wildbg_new(void);
-
-/**
- * # Safety
- *
- * Frees the memory of the argument.
- * Don't call it with a NULL pointer. Don't call it more than once for the same `Wildbg` pointer.
- */
-void wildbg_free(struct Wildbg *ptr);
-
 /**
  * Returns the best move for the given position.
  *
  * The player on turn always moves from pip 24 to pip 1.
  * The array `pips` contains the player's bar in index 25, the opponent's bar in index 0.
  * Checkers of the player on turn are encoded with positive integers, the opponent's checkers with negative integers.
+ *
+ * # Safety
+ * The argument `wildbg` needs to be initialized with `wildbg_new()` and `wildbg_free()` must not be called yet.
+ * Otherwise we have random memory access here.
  */
 struct CMove best_move(const struct Wildbg *wildbg,
                        const int (*pips)[26],
                        unsigned int die1,
                        unsigned int die2,
                        const struct BgConfig *config);
+
+struct CCubeInfo cube_info(const struct Wildbg *wildbg, const int (*pips)[26]);
 
 /**
  * Returns cubeless money game probabilities for a certain position.
@@ -118,4 +110,18 @@ struct CMove best_move(const struct Wildbg *wildbg,
 struct CProbabilities probabilities(const struct Wildbg *wildbg,
                                     const int (*pips)[26]);
 
-struct CCubeInfo cube_info(const struct Wildbg *wildbg, const int (*pips)[26]);
+/**
+ * # Safety
+ *
+ * Frees the memory of the argument.
+ * Don't call it with a NULL pointer. Don't call it more than once for the same `Wildbg` pointer.
+ */
+void wildbg_free(struct Wildbg *ptr);
+
+/**
+ * Loads the neural nets into memory and returns a pointer to the API.
+ * Returns `NULL` if the neural nets cannot be found.
+ *
+ * To free the memory after usage, call `wildbg_free`.
+ */
+struct Wildbg *wildbg_new(void);

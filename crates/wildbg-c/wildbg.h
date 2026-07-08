@@ -97,7 +97,22 @@ struct CMove best_move(const struct Wildbg *wildbg,
                        unsigned int die2,
                        const struct BgConfig *config);
 
-struct CCubeInfo cube_info(const struct Wildbg *wildbg, const int (*pips)[26]);
+/**
+ * Returns the money game cube decision for a certain position.
+ * If an illegal position is encountered, all values will be zero/false.
+ *
+ * `cube_position` describes who currently owns the doubling cube, from the
+ * player on turn's perspective: `0` for a centered cube (an initial double
+ * decision), `1` if the player on turn owns the cube, `-1` if the opponent
+ * owns it. Any other value is treated as a centered cube.
+ *
+ * The player on turn always moves from pip 24 to pip 1.
+ * The array `pips` contains the player's bar in index 25, the opponent's bar in index 0.
+ * Checkers of the player on turn are encoded with positive integers, the opponent's checkers with negative integers.
+ */
+struct CCubeInfo cube_info(const struct Wildbg *wildbg,
+                           const int (*pips)[26],
+                           int cube_position);
 
 /**
  * Returns cubeless money game probabilities for a certain position.

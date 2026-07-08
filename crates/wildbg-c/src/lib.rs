@@ -226,7 +226,11 @@ pub extern "C" fn probabilities(wildbg: &Wildbg, pips: &[c_int; 26]) -> CProbabi
 /// The array `pips` contains the player's bar in index 25, the opponent's bar in index 0.
 /// Checkers of the player on turn are encoded with positive integers, the opponent's checkers with negative integers.
 #[unsafe(no_mangle)]
-pub extern "C" fn cube_info(wildbg: &Wildbg, pips: &[c_int; 26], cube_position: c_int) -> CCubeInfo {
+pub extern "C" fn cube_info(
+    wildbg: &Wildbg,
+    pips: &[c_int; 26],
+    cube_position: c_int,
+) -> CCubeInfo {
     let pips = pips.map(|pip| pip as i8);
     let cube_position = match cube_position {
         1 => CubePosition::Owned,

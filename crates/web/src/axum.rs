@@ -57,8 +57,9 @@ impl ErrorMessage {
 
 /// Probabilities and cube decision for a position.
 ///
-/// Parameters are a position and, optionally, the current cube position.
-/// The cube decision assumes a money game; use `cube_position` to say who owns the cube.
+/// Parameters are a position and, optionally, the cube and match state.
+/// The cube decision defaults to a money game; use `cube_position` and `cube_value`
+/// for the cube, and `x_away`/`o_away` (plus `crawford`) for match play.
 /// For the position each pip with checkers on it has to be specified via the parameters `p0` through `p25`; pips without checkers can be skipped.
 /// We always move from pip 24 to pip 1, so `p1` to `p6` represent the player's (`x`) home board.
 ///
@@ -71,6 +72,7 @@ impl ErrorMessage {
     path = "/eval",
     tag = "endpoints",
     params(
+        AwayParams,
         CubeParams,
         PipParams,
     ),
@@ -102,6 +104,7 @@ impl ErrorMessage {
     )
 )]
 async fn get_eval<T: Evaluator>(
+    Query(away): Query<AwayParams>,
     Query(cube): Query<CubeParams>,
     Query(pips): Query<PipParams>,
     State(web_api): State<DynWebApi<T>>,
@@ -111,7 +114,7 @@ async fn get_eval<T: Evaluator>(
             StatusCode::INTERNAL_SERVER_ERROR,
             ErrorMessage::json("Neural net could not be constructed."),
         )),
-        Some(web_api) => match web_api.get_eval(pips, cube) {
+        Some(web_api) => match web_api.get_eval(pips, away, cube) {
             Err((status_code, message)) => Err((status_code, ErrorMessage::json(message.as_str()))),
             Ok(eval_response) => Ok(Json(eval_response)),
         },
@@ -330,6 +333,112 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn get_eval_match_score_changes_decision() {
+        let web_api = Arc::new(Some(WebApi::new(evaluator_fake())));
+
+        let money = body_string(
+            router(web_api.clone())
+                .oneshot(
+                    Request::builder()
+                        .uri("/eval?p1=1&p20=-1&p24=-1")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap(),
+        )
+        .await;
+
+        let response = router(web_api)
+            .oneshot(
+                Request::builder()
+                    .uri("/eval?p1=1&p20=-1&p24=-1&x_away=2&o_away=2")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let at_match = body_string(response).await;
+
+        // The match score must change the reported cube equities.
+        assert_ne!(money, at_match);
+    }
+
+    #[tokio::test]
+    async fn get_eval_invalid_cube_value() {
+        let web_api = Arc::new(Some(WebApi::new(evaluator_fake())));
+        let response = router(web_api)
+            .oneshot(
+                Request::builder()
+                    .uri("/eval?p1=1&p20=-1&p24=-1&cube_value=3")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let body = body_string(response).await;
+        assert!(body.contains("cube_value must be a positive power of two"));
+    }
+
+    #[tokio::test]
+    async fn get_eval_invalid_match_score() {
+        let web_api = Arc::new(Some(WebApi::new(evaluator_fake())));
+        let response = router(web_api)
+            .oneshot(
+                Request::builder()
+                    .uri("/eval?p1=1&p20=-1&p24=-1&x_away=0&o_away=5")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let body = body_string(response).await;
+        assert!(body.contains("both x_away and o_away must be at least 1"));
+    }
+
+    #[tokio::test]
+    async fn get_eval_rejects_out_of_range_match_score() {
+        // Away scores beyond the match equity table must be rejected, matching /move.
+        let web_api = Arc::new(Some(WebApi::new(evaluator_fake())));
+        let response = router(web_api)
+            .oneshot(
+                Request::builder()
+                    .uri("/eval?p1=1&p20=-1&p24=-1&x_away=20&o_away=20")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn get_eval_rejects_huge_cube_value() {
+        // A power-of-two cube value large enough to overflow the match math must
+        // be rejected rather than crashing the server.
+        let web_api = Arc::new(Some(WebApi::new(evaluator_fake())));
+        let response = router(web_api)
+            .oneshot(
+                Request::builder()
+                    .uri("/eval?p1=1&p20=-1&p24=-1&x_away=2&o_away=2&cube_value=2147483648")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let body = body_string(response).await;
+        assert!(body.contains("cube_value must be a positive power of two"));
+    }
+
+    #[tokio::test]
     async fn get_move_missing_neural_net() {
         let web_api = Arc::new(None) as DynWebApi<OnnxEvaluator<ContactInputsGen>>;
         let response = router(web_api)
@@ -464,5 +573,25 @@ mod tests {
             body,
             r#"{"moves":[{"play":[{"from":5,"to":4},{"from":4,"to":3},{"from":3,"to":2},{"from":2,"to":1}],"probabilities":{"win":0.5882353,"winG":0.11764706,"winBg":0.029411765,"loseG":0.05882353,"loseBg":0.029411765}},{"play":[{"from":5,"to":4},{"from":5,"to":4},{"from":4,"to":3},{"from":3,"to":2}],"probabilities":{"win":0.13830847,"winG":0.0019900498,"winBg":0.0009950249,"loseG":0.0009950249,"loseBg":0.0}},{"play":[{"from":5,"to":4},{"from":5,"to":4},{"from":4,"to":3},{"from":4,"to":3}],"probabilities":{"win":0.07676969,"winG":0.001994018,"winBg":0.000997009,"loseG":0.000997009,"loseBg":0.0}}]}"#
         );
+    }
+
+    #[tokio::test]
+    async fn get_move_accepts_match_score() {
+        // Arbitrary match scores used to be rejected; now they rank moves by
+        // match-winning probability and must succeed.
+        let web_api = Arc::new(Some(WebApi::new(evaluator_fake())));
+        let response = router(web_api)
+            .oneshot(
+                Request::builder()
+                    .uri("/move?die1=1&die2=1&p5=2&p24=-1&x_away=3&o_away=5")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = body_string(response).await;
+        assert!(body.contains("\"moves\""));
     }
 }

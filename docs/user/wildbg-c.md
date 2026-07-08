@@ -51,7 +51,13 @@ int main() {
   for (int i = 0; i < move.detail_count; i ++){
     printf("\tfrom %d to %d.\n", move.details[i].from, move.details[i].to);
   }
-  
+
+  // Cube decision for a centered cube of value 1.
+  // For a money game use `.x_away = 0, .o_away = 0`; a non-zero away score is match play.
+  BgConfig cube_config = { .x_away = 3, .o_away = 5, .crawford = false };
+  CCubeInfo cube = cube_info(wildbg, &starting, 0, 1, &cube_config);
+  printf("Should double: %d, should accept: %d.\n", cube.should_double, cube.should_accept);
+
   // Deconstruct the engine and free the memory:
   wildbg_free(wildbg);  
 }

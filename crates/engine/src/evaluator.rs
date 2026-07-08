@@ -37,9 +37,15 @@ pub trait Evaluator {
         self.best_position(pos, dice, |probabilities| probabilities.equity())
     }
 
-    /// Returns the position after applying the *best* movea according to the `value` closure to `pos`.
+    /// Returns the position after applying the *best* move according to the `value` closure to `pos`.
     /// The returned `Position` has already switched sides.
-    /// This means the returned position will have the *lowest* value of possible positions.
+    ///
+    /// `value` is evaluated from the perspective of the player `x` who just moved
+    /// (the probabilities are switched back to `x` before applying it), and the
+    /// position with the *highest* value for `x` is chosen. This matters for
+    /// asymmetric value functions such as match-winning probability; for
+    /// antisymmetric ones like equity it is equivalent to picking the lowest
+    /// value from the opponent's perspective.
     #[inline]
     fn best_position<F>(&self, pos: &Position, dice: &Dice, value: F) -> Position
     where
@@ -57,7 +63,10 @@ pub trait Evaluator {
         }
         self.eval_batch(positions)
             .into_iter()
-            .map(|(position, probabilities)| (position, value(&probabilities)))
+            // Negate so that we pick the position with the *highest* value for `x`
+            // while keeping `min_by`'s "first among equals" tie-breaking, which
+            // keeps move selection deterministic and unchanged for equity/win.
+            .map(|(position, probabilities)| (position, -value(&probabilities.switch_sides())))
             .min_by(|a, b| a.1.partial_cmp(&b.1).unwrap())
             .unwrap()
             .0

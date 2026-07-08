@@ -1,5 +1,6 @@
 use crate::bg_move::BgMove;
-use crate::cube::{CubeInfo, CubePosition};
+use crate::cube::{CubeInfo, CubeState, MatchState};
+use crate::match_equity::{MAX_AWAY, position_equity};
 use engine::composite::CompositeEvaluator;
 use engine::dice::Dice;
 use engine::evaluator::Evaluator;
@@ -9,6 +10,11 @@ use engine::probabilities::Probabilities;
 pub enum ScoreConfig {
     MoneyGame,
     OnePointer,
+    /// Match play at the given away score, ranking moves by match-winning probability.
+    Match {
+        x_away: u32,
+        o_away: u32,
+    },
 }
 
 impl TryFrom<(u32, u32)> for ScoreConfig {
@@ -19,19 +25,25 @@ impl TryFrom<(u32, u32)> for ScoreConfig {
         match (x_away, o_away) {
             (0, 0) => Ok(ScoreConfig::MoneyGame),
             (1, 1) => Ok(ScoreConfig::OnePointer),
-            (0, 1) => Err("If x_away is 0, then o_away must also be 0."),
-            (1, 0) => Err("If o_away is 0, then x_away must also be 0."),
-            (_, _) => Err("Currently only 1 pointers and money games are supported."),
+            (0, _) | (_, 0) => Err("For match play both x_away and o_away must be at least 1."),
+            (x_away, o_away) if x_away <= MAX_AWAY && o_away <= MAX_AWAY => {
+                Ok(ScoreConfig::Match { x_away, o_away })
+            }
+            (_, _) => Err("Away scores larger than the match equity table are not supported."),
         }
     }
 }
 
 impl ScoreConfig {
     #[inline]
-    pub fn value(&self) -> impl Fn(&Probabilities) -> f32 {
-        match self {
-            ScoreConfig::OnePointer => |p: &Probabilities| p.win(),
-            ScoreConfig::MoneyGame => |p: &Probabilities| p.equity(),
+    pub fn value(&self) -> Box<dyn Fn(&Probabilities) -> f32> {
+        match *self {
+            ScoreConfig::OnePointer => Box::new(|p: &Probabilities| p.win()),
+            ScoreConfig::MoneyGame => Box::new(|p: &Probabilities| p.equity()),
+            // Rank moves by cubeless match-winning probability at the base cube.
+            ScoreConfig::Match { x_away, o_away } => {
+                Box::new(move |p: &Probabilities| position_equity(p, x_away, o_away, 1))
+            }
         }
     }
 }
@@ -74,8 +86,13 @@ impl<T: Evaluator> WildbgApi<T> {
         BgMove::new(position, &new_position.sides_switched(), dice)
     }
 
-    pub fn cube_info(&self, position: &Position, cube_position: CubePosition) -> CubeInfo {
-        CubeInfo::new(&self.evaluator.eval(position), cube_position)
+    pub fn cube_info(
+        &self,
+        position: &Position,
+        cube: CubeState,
+        match_state: MatchState,
+    ) -> CubeInfo {
+        CubeInfo::for_state(&self.evaluator.eval(position), cube, match_state)
     }
 }
 
@@ -126,6 +143,24 @@ mod tests {
         let api = WildbgApi { evaluator };
         // When
         let config = ScoreConfig::MoneyGame;
+        let bg_move = api.best_move(&given_pos, &Dice::new(4, 2), &config);
+        // Then
+        let expected_move = BgMove {
+            details: vec![MoveDetail { from: 7, to: 3 }, MoveDetail { from: 7, to: 5 }],
+        };
+        assert_eq!(bg_move, expected_move);
+    }
+
+    #[test]
+    fn best_move_match() {
+        // Given a deep, symmetric match score, where match equity is close to
+        // linear, the match move should match the money move for this fixture.
+        let given_pos = pos!(x 7:2; o 20:2);
+        let evaluator = evaluator_fake();
+        let api = WildbgApi { evaluator };
+        // When
+        let config = ScoreConfig::try_from((7, 7)).unwrap();
+        assert!(matches!(config, ScoreConfig::Match { .. }));
         let bg_move = api.best_move(&given_pos, &Dice::new(4, 2), &config);
         // Then
         let expected_move = BgMove {

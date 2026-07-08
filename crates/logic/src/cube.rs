@@ -1,4 +1,6 @@
-use crate::match_equity::{match_equity_after_loss, match_equity_after_win, position_equity};
+use crate::match_equity::{
+    MAX_AWAY, match_equity_after_loss, match_equity_after_win, position_equity,
+};
 use engine::probabilities::Probabilities;
 #[cfg(feature = "web")]
 use serde::Serialize;
@@ -42,6 +44,10 @@ impl Default for CubeState {
     }
 }
 
+/// Largest doubling cube value the match cube math will consider. Real cubes are
+/// far below this; the bound only keeps the take-point recursion from overflowing.
+pub const MAX_CUBE_VALUE: u32 = 1 << 20;
+
 /// The scoring context for a cube decision.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MatchState {
@@ -54,6 +60,32 @@ pub enum MatchState {
         o_away: u32,
         crawford: bool,
     },
+}
+
+impl MatchState {
+    /// Builds the scoring context from away scores: both `0` is a money game,
+    /// otherwise it is match play. Validates the away scores and, if `crawford`
+    /// is set, that exactly one player is one point away. This is the single
+    /// place that maps away scores to a [`MatchState`].
+    pub fn from_away(x_away: u32, o_away: u32, crawford: bool) -> Result<Self, &'static str> {
+        match (x_away, o_away) {
+            (0, 0) => Ok(MatchState::Money),
+            (0, _) | (_, 0) => Err("for match play both x_away and o_away must be at least 1"),
+            (x_away, o_away) if x_away <= MAX_AWAY && o_away <= MAX_AWAY => {
+                if crawford && (x_away == 1) == (o_away == 1) {
+                    return Err(
+                        "the Crawford game requires exactly one player to be one point away",
+                    );
+                }
+                Ok(MatchState::Match {
+                    x_away,
+                    o_away,
+                    crawford,
+                })
+            }
+            _ => Err("away scores larger than the match equity table are not supported"),
+        }
+    }
 }
 
 /// Whether player `x` is allowed to (re)double given the cube position.
@@ -166,7 +198,11 @@ impl CubeInfo {
         crawford: bool,
     ) -> Self {
         let cubeless_equity = value.equity();
-        let stake = cube.value;
+        // Clamp inputs so the take-point recursion always terminates and cannot
+        // overflow, whatever a caller passes (`match_equity` clamps aways too).
+        let stake = cube.value.clamp(1, MAX_CUBE_VALUE);
+        let x_away = x_away.min(MAX_AWAY);
+        let o_away = o_away.min(MAX_AWAY);
 
         // During the Crawford game the cube may not be used.
         if crawford {
@@ -345,9 +381,10 @@ fn post_crawford_decision(x_away: u32, can_double: bool) -> (bool, bool) {
         // `x` is the leader (needs one point); doubling can never help.
         (false, false)
     } else {
-        // `x` is the trailer; double immediately. The leader takes unless a free
-        // drop applies, i.e. unless the trailer needs an even number of points.
-        (can_double, x_away % 2 == 1)
+        // `x` is the trailer; double immediately (if it can). The leader takes
+        // unless a free drop applies, i.e. unless the trailer needs an even
+        // number of points. `accept` is only meaningful when `x` can double.
+        (can_double, can_double && x_away % 2 == 1)
     }
 }
 
@@ -590,6 +627,52 @@ mod tests {
         };
         assert!(no_double(CubePosition::Owned) > no_double(CubePosition::Centered));
         assert!(no_double(CubePosition::Centered) > no_double(CubePosition::OpponentOwned));
+    }
+
+    #[test]
+    fn match_state_from_away_validates() {
+        use super::MatchState;
+        assert_eq!(MatchState::from_away(0, 0, false), Ok(MatchState::Money));
+        assert!(MatchState::from_away(0, 5, false).is_err());
+        assert!(MatchState::from_away(5, 0, false).is_err());
+        assert!(MatchState::from_away(20, 20, false).is_err());
+        assert_eq!(
+            MatchState::from_away(2, 2, false),
+            Ok(MatchState::Match {
+                x_away: 2,
+                o_away: 2,
+                crawford: false
+            })
+        );
+        // Crawford needs exactly one player one point away.
+        assert!(MatchState::from_away(3, 1, true).is_ok());
+        assert!(MatchState::from_away(5, 5, true).is_err());
+        assert!(MatchState::from_away(1, 1, true).is_err());
+    }
+
+    #[test]
+    fn match_cube_value_zero_does_not_crash() {
+        // A degenerate cube value must be clamped, not send the take-point
+        // recursion into an infinite loop.
+        let cube = CubeState {
+            position: CubePosition::Centered,
+            value: 0,
+        };
+        let info = CubeInfo::for_match(&no_gammons(0.6), cube, 5, 5, false);
+        assert!(info.equity_no_double().is_finite());
+    }
+
+    #[test]
+    fn post_crawford_leader_cube_cannot_be_taken() {
+        // Trailer with an odd away would normally be taken, but if the opponent
+        // owns the cube `x` cannot double, so `accept` must be false too.
+        let cube = CubeState {
+            position: CubePosition::OpponentOwned,
+            value: 1,
+        };
+        let info = CubeInfo::for_match(&no_gammons(0.5), cube, 3, 1, false);
+        assert!(!info.double());
+        assert!(!info.accept());
     }
 
     #[test]

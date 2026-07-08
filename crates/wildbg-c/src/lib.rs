@@ -251,17 +251,13 @@ pub extern "C" fn cube_info(
         position,
         value: cube_value.max(1) as u32,
     };
-    let match_state = if config.x_away == 0 && config.o_away == 0 {
-        MatchState::Money
-    } else {
-        MatchState::Match {
-            x_away: config.x_away,
-            o_away: config.o_away,
-            crawford: config.crawford,
-        }
+    let cube_result = || -> Result<CCubeInfo, Error> {
+        let position = Position::try_from(pips)?;
+        let match_state = MatchState::from_away(config.x_away, config.o_away, config.crawford)?;
+        Ok((&wildbg.api.cube_info(&position, cube, match_state)).into())
     };
-    match Position::try_from(pips) {
-        Ok(position) => (&wildbg.api.cube_info(&position, cube, match_state)).into(),
+    match cube_result() {
+        Ok(cube_info) => cube_info,
         Err(error) => {
             eprintln!("{error}");
             CCubeInfo::default()

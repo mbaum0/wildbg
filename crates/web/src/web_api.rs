@@ -4,7 +4,7 @@ use engine::evaluator::Evaluator;
 use engine::position::Position;
 use hyper::StatusCode;
 use logic::bg_move::{BgMove, MoveDetail};
-use logic::cube::{CubeInfo, CubePosition, CubeState, MatchState};
+use logic::cube::{CubeInfo, CubePosition, CubeState, MAX_CUBE_VALUE, MatchState};
 use logic::wildbg_api::{ScoreConfig, WildbgApi};
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
@@ -252,11 +252,10 @@ impl TryFrom<PipParams> for Position {
 pub struct AwayParams {
     /// Number of points the player on turn `x` needs to win.
     ///
-    /// Currently only money game and one-pointers are supported.
-    ///
     /// For a money game, omit both `x_away` and `o_away` or set both parameters to 0.
     ///
-    /// For a one-pointer, set both `x_away` and `o_away` to 1.
+    /// For match play set both to the points each player still needs (1 to 15);
+    /// both `/move` and `/eval` then use match-play evaluation for that score.
     #[param(minimum = 0, example = 0)]
     x_away: Option<u32>,
     /// Number of points the opponent `o` needs to win.
@@ -303,7 +302,7 @@ impl TryFrom<&CubeParams> for CubeState {
             Some(_) => return Err("cube_position must be one of: centered, owned, opponent"),
         };
         let value = params.cube_value.unwrap_or(1);
-        if value == 0 || !value.is_power_of_two() {
+        if value == 0 || !value.is_power_of_two() || value > MAX_CUBE_VALUE {
             return Err("cube_value must be a positive power of two: 1, 2, 4, …");
         }
         Ok(CubeState { position, value })
@@ -316,15 +315,7 @@ fn match_state(away: &AwayParams, cube: &CubeParams) -> Result<MatchState, &'sta
     let x_away = away.x_away.unwrap_or(0);
     let o_away = away.o_away.unwrap_or(0);
     let crawford = cube.crawford.unwrap_or(false);
-    match (x_away, o_away) {
-        (0, 0) => Ok(MatchState::Money),
-        (0, _) | (_, 0) => Err("for match play both x_away and o_away must be at least 1"),
-        (x_away, o_away) => Ok(MatchState::Match {
-            x_away,
-            o_away,
-            crawford,
-        }),
-    }
+    MatchState::from_away(x_away, o_away, crawford)
 }
 
 #[cfg(test)]

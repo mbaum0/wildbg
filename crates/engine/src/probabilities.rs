@@ -54,7 +54,8 @@ impl Probabilities {
         self.win_normal + self.win_gammon + self.win_bg
     }
 
-    pub(crate) fn switch_sides(&self) -> Self {
+    /// Returns the probabilities from the opponent's perspective (wins and losses swapped).
+    pub fn switch_sides(&self) -> Self {
         Self {
             win_normal: self.lose_normal,
             win_gammon: self.lose_gammon,

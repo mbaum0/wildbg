@@ -402,6 +402,43 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn get_eval_rejects_out_of_range_match_score() {
+        // Away scores beyond the match equity table must be rejected, matching /move.
+        let web_api = Arc::new(Some(WebApi::new(evaluator_fake())));
+        let response = router(web_api)
+            .oneshot(
+                Request::builder()
+                    .uri("/eval?p1=1&p20=-1&p24=-1&x_away=20&o_away=20")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn get_eval_rejects_huge_cube_value() {
+        // A power-of-two cube value large enough to overflow the match math must
+        // be rejected rather than crashing the server.
+        let web_api = Arc::new(Some(WebApi::new(evaluator_fake())));
+        let response = router(web_api)
+            .oneshot(
+                Request::builder()
+                    .uri("/eval?p1=1&p20=-1&p24=-1&x_away=2&o_away=2&cube_value=2147483648")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let body = body_string(response).await;
+        assert!(body.contains("cube_value must be a positive power of two"));
+    }
+
+    #[tokio::test]
     async fn get_move_missing_neural_net() {
         let web_api = Arc::new(None) as DynWebApi<OnnxEvaluator<ContactInputsGen>>;
         let response = router(web_api)

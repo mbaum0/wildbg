@@ -162,17 +162,6 @@ mod tests {
         assert_eq!(match_equity_after_loss(5, 2, 1), match_equity(5, 1));
     }
 
-    fn switch_sides(p: &Probabilities) -> Probabilities {
-        Probabilities {
-            win_normal: p.lose_normal,
-            win_gammon: p.lose_gammon,
-            win_bg: p.lose_bg,
-            lose_normal: p.win_normal,
-            lose_gammon: p.win_gammon,
-            lose_bg: p.win_bg,
-        }
-    }
-
     #[test]
     fn position_equity_is_antisymmetric_under_switch() {
         // The opponent's match-winning probability (their probs, their away
@@ -189,7 +178,7 @@ mod tests {
         for x_away in 1..=6 {
             for o_away in 1..=6 {
                 let ours = position_equity(&p, x_away, o_away, 1);
-                let theirs = position_equity(&switch_sides(&p), o_away, x_away, 1);
+                let theirs = position_equity(&p.switch_sides(), o_away, x_away, 1);
                 assert!((ours + theirs - 1.0).abs() < 1e-6);
             }
         }

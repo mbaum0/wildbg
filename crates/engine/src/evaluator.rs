@@ -63,8 +63,11 @@ pub trait Evaluator {
         }
         self.eval_batch(positions)
             .into_iter()
-            .map(|(position, probabilities)| (position, value(&probabilities.switch_sides())))
-            .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap())
+            // Negate so that we pick the position with the *highest* value for `x`
+            // while keeping `min_by`'s "first among equals" tie-breaking, which
+            // keeps move selection deterministic and unchanged for equity/win.
+            .map(|(position, probabilities)| (position, -value(&probabilities.switch_sides())))
+            .min_by(|a, b| a.1.partial_cmp(&b.1).unwrap())
             .unwrap()
             .0
     }

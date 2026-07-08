@@ -20,6 +20,7 @@ This means you can reuse the same neural networks between for example 0.2.0 and 
 ### Added
 
 - Money game cube decisions are now based on Janowski's cube formulae instead of a placeholder. The `/eval` HTTP endpoint and the C `cube_info` function additionally return cubeful equities (`cubelessEquity`, `equityNoDouble`, `equityDoubleTake`) and accept the current cube position (centered, owned, opponent-owned) via `cube_position`: ([#17](https://github.com/carsten-wenderdel/wildbg/issues/17))
+- Match play cube decisions using a static take-point method on top of Kit Woolsey's match equity table, including Crawford and post-Crawford handling. The `/eval` endpoint gains `x_away`/`o_away`/`crawford`/`cube_value` parameters, and the C `cube_info` function gains a `cube_value` argument and a `BgConfig` (with a new `crawford` field): ([#17](https://github.com/carsten-wenderdel/wildbg/issues/17))
 
 ### Fixed
 

@@ -1,5 +1,5 @@
 use crate::bg_move::BgMove;
-use crate::cube::{CubeInfo, CubePosition};
+use crate::cube::{CubeInfo, CubeState, MatchState};
 use engine::composite::CompositeEvaluator;
 use engine::dice::Dice;
 use engine::evaluator::Evaluator;
@@ -74,8 +74,13 @@ impl<T: Evaluator> WildbgApi<T> {
         BgMove::new(position, &new_position.sides_switched(), dice)
     }
 
-    pub fn cube_info(&self, position: &Position, cube_position: CubePosition) -> CubeInfo {
-        CubeInfo::new(&self.evaluator.eval(position), cube_position)
+    pub fn cube_info(
+        &self,
+        position: &Position,
+        cube: CubeState,
+        match_state: MatchState,
+    ) -> CubeInfo {
+        CubeInfo::for_state(&self.evaluator.eval(position), cube, match_state)
     }
 }
 

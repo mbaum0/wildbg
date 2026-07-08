@@ -4,7 +4,7 @@ use engine::dice::Dice;
 use engine::position::Position;
 use engine::probabilities::Probabilities;
 use logic::bg_move::{BgMove, MoveDetail};
-use logic::cube::{CubeInfo, CubePosition};
+use logic::cube::{CubeInfo, CubePosition, CubeState, MatchState};
 use logic::wildbg_api::{ScoreConfig, WildbgApi};
 
 // When this file is changed, recreate the header file by executing this from the project's root:
@@ -21,14 +21,16 @@ pub struct Wildbg {
 
 /// Configuration needed for the evaluation of positions.
 ///
-/// Currently only 1 pointers and money game are supported.
-/// In the future `BgConfig` can also include information about Crawford, cube possession, strength of the engine and so on.
+/// For checker play (`best_move`) currently only 1 pointers and money game are supported.
+/// The cube decision (`cube_info`) supports arbitrary match scores.
 #[repr(C)]
 pub struct BgConfig {
     /// Number of points the player on turn needs to finish the match. Zero indicates money game.
     pub x_away: c_uint,
     /// Number of points the opponent needs to finish the match. Zero indicates money game.
     pub o_away: c_uint,
+    /// Whether the current game is the Crawford game. Only relevant for the cube decision in match play.
+    pub crawford: bool,
 }
 
 #[unsafe(no_mangle)]
@@ -222,6 +224,12 @@ pub extern "C" fn probabilities(wildbg: &Wildbg, pips: &[c_int; 26]) -> CProbabi
 /// decision), `1` if the player on turn owns the cube, `-1` if the opponent
 /// owns it. Any other value is treated as a centered cube.
 ///
+/// `cube_value` is the current value of the doubling cube (1, 2, 4, …). Values
+/// below 1 are treated as 1. It only affects match play.
+///
+/// `config` supplies the match score: `x_away`/`o_away` of `0` (both) means a
+/// money game, otherwise it is match play at that score, honouring `crawford`.
+///
 /// The player on turn always moves from pip 24 to pip 1.
 /// The array `pips` contains the player's bar in index 25, the opponent's bar in index 0.
 /// Checkers of the player on turn are encoded with positive integers, the opponent's checkers with negative integers.
@@ -230,15 +238,30 @@ pub extern "C" fn cube_info(
     wildbg: &Wildbg,
     pips: &[c_int; 26],
     cube_position: c_int,
+    cube_value: c_int,
+    config: &BgConfig,
 ) -> CCubeInfo {
     let pips = pips.map(|pip| pip as i8);
-    let cube_position = match cube_position {
+    let position = match cube_position {
         1 => CubePosition::Owned,
         -1 => CubePosition::OpponentOwned,
         _ => CubePosition::Centered,
     };
+    let cube = CubeState {
+        position,
+        value: cube_value.max(1) as u32,
+    };
+    let match_state = if config.x_away == 0 && config.o_away == 0 {
+        MatchState::Money
+    } else {
+        MatchState::Match {
+            x_away: config.x_away,
+            o_away: config.o_away,
+            crawford: config.crawford,
+        }
+    };
     match Position::try_from(pips) {
-        Ok(position) => (&wildbg.api.cube_info(&position, cube_position)).into(),
+        Ok(position) => (&wildbg.api.cube_info(&position, cube, match_state)).into(),
         Err(error) => {
             eprintln!("{error}");
             CCubeInfo::default()
@@ -356,6 +379,7 @@ mod tests {
         let config = BgConfig {
             x_away: 1,
             o_away: 1,
+            crawford: false,
         };
 
         // Then
@@ -369,6 +393,7 @@ mod tests {
         let config = BgConfig {
             x_away: 0,
             o_away: 0,
+            crawford: false,
         };
 
         // Then

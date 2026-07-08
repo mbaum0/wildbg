@@ -35,8 +35,8 @@ typedef struct CMove {
 /**
  * Configuration needed for the evaluation of positions.
  *
- * Currently only 1 pointers and money game are supported.
- * In the future `BgConfig` can also include information about Crawford, cube possession, strength of the engine and so on.
+ * For checker play (`best_move`) currently only 1 pointers and money game are supported.
+ * The cube decision (`cube_info`) supports arbitrary match scores.
  */
 typedef struct BgConfig {
   /**
@@ -47,6 +47,10 @@ typedef struct BgConfig {
    * Number of points the opponent needs to finish the match. Zero indicates money game.
    */
   unsigned int o_away;
+  /**
+   * Whether the current game is the Crawford game. Only relevant for the cube decision in match play.
+   */
+  bool crawford;
 } BgConfig;
 
 typedef struct CCubeInfo {
@@ -106,13 +110,21 @@ struct CMove best_move(const struct Wildbg *wildbg,
  * decision), `1` if the player on turn owns the cube, `-1` if the opponent
  * owns it. Any other value is treated as a centered cube.
  *
+ * `cube_value` is the current value of the doubling cube (1, 2, 4, …). Values
+ * below 1 are treated as 1. It only affects match play.
+ *
+ * `config` supplies the match score: `x_away`/`o_away` of `0` (both) means a
+ * money game, otherwise it is match play at that score, honouring `crawford`.
+ *
  * The player on turn always moves from pip 24 to pip 1.
  * The array `pips` contains the player's bar in index 25, the opponent's bar in index 0.
  * Checkers of the player on turn are encoded with positive integers, the opponent's checkers with negative integers.
  */
 struct CCubeInfo cube_info(const struct Wildbg *wildbg,
                            const int (*pips)[26],
-                           int cube_position);
+                           int cube_position,
+                           int cube_value,
+                           const struct BgConfig *config);
 
 /**
  * Returns cubeless money game probabilities for a certain position.

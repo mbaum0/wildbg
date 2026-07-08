@@ -1,3 +1,4 @@
+use crate::match_equity::{match_equity_after_loss, match_equity_after_win};
 use engine::probabilities::Probabilities;
 #[cfg(feature = "web")]
 use serde::Serialize;
@@ -22,15 +23,58 @@ pub enum CubePosition {
     OpponentOwned,
 }
 
+/// The current state of the doubling cube.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CubeState {
+    /// Who owns the cube.
+    pub position: CubePosition,
+    /// Current cube value (1, 2, 4, …). Only relevant in match play; a money
+    /// game is linear, so the value does not change the decision there.
+    pub value: u32,
+}
+
+impl Default for CubeState {
+    fn default() -> Self {
+        Self {
+            position: CubePosition::Centered,
+            value: 1,
+        }
+    }
+}
+
+/// The scoring context for a cube decision.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MatchState {
+    /// Unlimited money game; decided with Janowski's cube formulae.
+    Money,
+    /// Match play, using a match equity table. `x_away`/`o_away` are how many
+    /// points each player still needs; `crawford` marks the Crawford game.
+    Match {
+        x_away: u32,
+        o_away: u32,
+        crawford: bool,
+    },
+}
+
+/// Whether player `x` is allowed to (re)double given the cube position.
+fn can_double(position: CubePosition) -> bool {
+    matches!(position, CubePosition::Centered | CubePosition::Owned)
+}
+
 #[cfg_attr(feature = "web", derive(Serialize, ToSchema))]
 #[cfg_attr(feature = "web", serde(rename_all = "camelCase"))]
-/// Money game cube decisions based on Janowski's cube formulae.
+/// Cube decisions for money game (Janowski's cube formulae) or match play (a
+/// static take-point method on top of a match equity table).
 ///
-/// See <https://bkgm.com/articles/Janowski/cubeformulae.pdf>.
+/// See <https://bkgm.com/articles/Janowski/cubeformulae.pdf> for the money game.
 ///
-/// The decisions assume a money game. Cube ownership is taken into account via
-/// [`CubePosition`]: when the opponent owns the cube, player `x` may not double
-/// and both `double` and `accept` are `false`. Match play is a future extension.
+/// Cube ownership is taken into account via [`CubePosition`]: when the opponent
+/// owns the cube, player `x` may not double and both `double` and `accept` are
+/// `false`. In match play the Crawford and post-Crawford rules are handled too.
+///
+/// The `equity_*` fields are cubeful equities in points for a money game, but
+/// match-winning probabilities (0..1) for match play; `cubeless_equity` is
+/// always the money cubeless equity in points.
 pub struct CubeInfo {
     /// `true` if the player `x` should double, `false` if no double yet or too good.
     double: bool,
@@ -38,16 +82,28 @@ pub struct CubeInfo {
     accept: bool,
     /// Cubeless money game equity of the position, from player `x`'s perspective.
     cubeless_equity: f32,
-    /// Cubeful equity if player `x` does not double, from `x`'s perspective.
-    /// This depends on the current cube position.
+    /// Equity if player `x` does not double, from `x`'s perspective.
+    /// Depends on the current cube position (and, in match play, the score).
     equity_no_double: f32,
-    /// Cubeful equity if player `x` doubles and the opponent takes, from `x`'s perspective.
+    /// Equity if player `x` doubles and the opponent takes, from `x`'s perspective.
     /// The stake is already doubled, so this is comparable to the other equities.
     equity_double_take: f32,
 }
 
 impl CubeInfo {
-    /// Computes the cube decision for the given probabilities and cube position.
+    /// Cube decision for the given probabilities, cube state and scoring context.
+    pub fn for_state(value: &Probabilities, cube: CubeState, match_state: MatchState) -> Self {
+        match match_state {
+            MatchState::Money => Self::new(value, cube.position),
+            MatchState::Match {
+                x_away,
+                o_away,
+                crawford,
+            } => Self::for_match(value, cube, x_away, o_away, crawford),
+        }
+    }
+
+    /// Money game cube decision for the given cube position (Janowski).
     pub fn new(value: &Probabilities, cube_position: CubePosition) -> Self {
         let x = CUBE_EFFICIENCY;
 
@@ -87,30 +143,131 @@ impl CubeInfo {
         };
         // After a double and take the opponent owns the cube and the stake is doubled.
         let equity_double_take = 2.0 * equity_opponent_owned;
+        // If the opponent passes, `x` cashes the current stake, worth +1.0 per point.
+        let equity_pass = 1.0;
 
-        // `x` can only offer a double when holding a centered cube or owning it.
-        let can_double = matches!(cube_position, CubePosition::Centered | CubePosition::Owned);
+        Self::decide(
+            value.equity(),
+            equity_no_double,
+            equity_pass,
+            equity_double_take,
+            can_double(cube_position),
+        )
+    }
 
-        // The opponent takes when doing so is better for them than dropping.
-        // Dropping costs them the current stake (`x`'s equity would be +1.0).
-        let accept = can_double && equity_double_take < 1.0;
-        // `x` doubles when doubling – after the opponent's best response of
-        // take or drop – beats not doubling. Positions that are "too good" to
-        // double yield `equity_no_double > 1.0` and thus `false`.
-        let double = can_double && equity_double_take.min(1.0) > equity_no_double;
+    /// Match play cube decision using a static take-point method on top of the
+    /// match equity table. `x_away`/`o_away` are how many points each player
+    /// still needs; `crawford` marks the Crawford game.
+    pub fn for_match(
+        value: &Probabilities,
+        cube: CubeState,
+        x_away: u32,
+        o_away: u32,
+        crawford: bool,
+    ) -> Self {
+        let cubeless_equity = value.equity();
+        let stake = cube.value;
+        // Match-winning probability of just playing on at the current / doubled cube.
+        let equity_no_double = expected_match_equity(value, x_away, o_away, stake);
+        let equity_double_take = expected_match_equity(value, x_away, o_away, 2 * stake);
 
+        // During the Crawford game the cube may not be used.
+        if crawford {
+            return Self::no_cube(cubeless_equity, equity_no_double, equity_double_take);
+        }
+
+        // Post-Crawford: exactly one player is one point away.
+        if x_away == 1 || o_away == 1 {
+            let (double, accept) = post_crawford_decision(x_away, can_double(cube.position));
+            return Self {
+                double,
+                accept,
+                cubeless_equity,
+                equity_no_double,
+                equity_double_take,
+            };
+        }
+
+        // Pre-Crawford static take-point method. If the opponent passes, `x`
+        // cashes the current stake (`stake` points before the double).
+        let equity_pass = match_equity_after_win(x_away, o_away, stake);
+        Self::decide(
+            cubeless_equity,
+            equity_no_double,
+            equity_pass,
+            equity_double_take,
+            can_double(cube.position),
+        )
+    }
+
+    /// Derives `double`/`accept` from the equities of the three cube actions:
+    /// not doubling (`equity_no_double`), the opponent passing (`equity_pass`)
+    /// and the opponent taking (`equity_double_take`). Works for money game
+    /// (points) and match play (match-winning probabilities) alike.
+    fn decide(
+        cubeless_equity: f32,
+        equity_no_double: f32,
+        equity_pass: f32,
+        equity_double_take: f32,
+        can_double: bool,
+    ) -> Self {
+        // The opponent picks the response that is worst for `x`.
+        let equity_double = equity_pass.min(equity_double_take);
+        // The opponent takes when taking is better for them than passing.
+        let accept = can_double && equity_double_take < equity_pass;
+        // `x` doubles when doubling beats not doubling. "Too good" positions,
+        // where playing on is worth more than cashing, fall out automatically.
+        let double = can_double && equity_double > equity_no_double;
         Self {
             double,
             accept,
-            cubeless_equity: value.equity(),
+            cubeless_equity,
+            equity_no_double,
+            equity_double_take,
+        }
+    }
+
+    /// A decision where the cube cannot be used (e.g. the Crawford game).
+    fn no_cube(cubeless_equity: f32, equity_no_double: f32, equity_double_take: f32) -> Self {
+        Self {
+            double: false,
+            accept: false,
+            cubeless_equity,
             equity_no_double,
             equity_double_take,
         }
     }
 }
 
+/// Expected match-winning probability for `x` of playing the game out at the
+/// given `stake` (the number of points a plain win is worth), summed over the
+/// cubeless win/gammon/backgammon distribution.
+fn expected_match_equity(value: &Probabilities, x_away: u32, o_away: u32, stake: u32) -> f32 {
+    value.win_normal * match_equity_after_win(x_away, o_away, stake)
+        + value.win_gammon * match_equity_after_win(x_away, o_away, 2 * stake)
+        + value.win_bg * match_equity_after_win(x_away, o_away, 3 * stake)
+        + value.lose_normal * match_equity_after_loss(x_away, o_away, stake)
+        + value.lose_gammon * match_equity_after_loss(x_away, o_away, 2 * stake)
+        + value.lose_bg * match_equity_after_loss(x_away, o_away, 3 * stake)
+}
+
+/// Cube decision in a post-Crawford game, where exactly one player is one point
+/// away. The trailer should double immediately; the leader never doubles. The
+/// leader's take follows the free-drop rule: drop when the trailer needs an even
+/// number of points, otherwise take.
+fn post_crawford_decision(x_away: u32, can_double: bool) -> (bool, bool) {
+    if x_away == 1 {
+        // `x` is the leader (needs one point); doubling can never help.
+        (false, false)
+    } else {
+        // `x` is the trailer; double immediately. The leader takes unless a free
+        // drop applies, i.e. unless the trailer needs an even number of points.
+        (can_double, x_away % 2 == 1)
+    }
+}
+
 impl From<&Probabilities> for CubeInfo {
-    /// Cube decision for a centered cube, i.e. an initial double decision.
+    /// Cube decision for a centered cube in a money game, i.e. an initial double.
     fn from(value: &Probabilities) -> Self {
         Self::new(value, CubePosition::Centered)
     }
@@ -136,7 +293,7 @@ impl CubeInfo {
 
 #[cfg(test)]
 mod tests {
-    use super::{CubeInfo, CubePosition};
+    use super::{CubeInfo, CubePosition, CubeState, MatchState};
     use engine::probabilities::Probabilities;
 
     /// Helper for a position without gammons or backgammons and a given win probability.
@@ -244,5 +401,96 @@ mod tests {
         // The no-double equity reflects the opponent owning the cube.
         let expected = CubeInfo::new(&no_gammons(0.80), CubePosition::Centered);
         assert!(cube.equity_no_double() < expected.equity_no_double());
+    }
+
+    // --- Match play ---
+
+    /// A centered cube of value 1 at the given away score.
+    fn at_match(win: f32, x_away: u32, o_away: u32, crawford: bool) -> CubeInfo {
+        CubeInfo::for_match(
+            &no_gammons(win),
+            CubeState::default(),
+            x_away,
+            o_away,
+            crawford,
+        )
+    }
+
+    #[test]
+    fn for_state_money_matches_new() {
+        // The money variant of `for_state` must equal the plain money constructor.
+        let probs = no_gammons(0.70);
+        let cube = CubeState {
+            position: CubePosition::Owned,
+            value: 4,
+        };
+        let via_state = CubeInfo::for_state(&probs, cube, MatchState::Money);
+        let direct = CubeInfo::new(&probs, CubePosition::Owned);
+        assert_eq!(via_state.double(), direct.double());
+        assert_eq!(via_state.accept(), direct.accept());
+        assert_eq!(via_state.equity_no_double(), direct.equity_no_double());
+        assert_eq!(via_state.equity_double_take(), direct.equity_double_take());
+    }
+
+    #[test]
+    fn no_cube_during_crawford_game() {
+        // In the Crawford game the cube may not be used, whatever the position.
+        let cube = at_match(0.80, 3, 1, true);
+        assert!(!cube.double());
+        assert!(!cube.accept());
+    }
+
+    #[test]
+    fn post_crawford_trailer_doubles_leader_does_not() {
+        // Trailer (needs more than one point) doubles immediately.
+        let trailer = at_match(0.50, 3, 1, false);
+        assert!(trailer.double());
+        // Leader (needs one point) never doubles.
+        let leader = at_match(0.50, 1, 3, false);
+        assert!(!leader.double());
+    }
+
+    #[test]
+    fn post_crawford_free_drop_on_even_away() {
+        // Trailer needs an odd number of points: the leader takes.
+        assert!(at_match(0.50, 3, 1, false).accept());
+        // Trailer needs an even number of points: the leader has a free drop.
+        assert!(!at_match(0.50, 4, 1, false).accept());
+    }
+
+    #[test]
+    fn two_away_two_away_take_point_is_about_thirty_percent() {
+        // At 2-away/2-away a doubled game is played for the match, so the taker's
+        // take point is about 30%: the opponent takes when x wins < 70%.
+        assert!(at_match(0.60, 2, 2, false).accept());
+        assert!(!at_match(0.75, 2, 2, false).accept());
+    }
+
+    #[test]
+    fn two_away_two_away_doubles_around_fifty_percent() {
+        // At 2-away/2-away you should double as soon as you are a real favorite.
+        assert!(!at_match(0.40, 2, 2, false).double());
+        assert!(at_match(0.60, 2, 2, false).double());
+    }
+
+    #[test]
+    fn match_and_money_can_disagree() {
+        // At 55% with no gammons a money game is not yet a double, but at
+        // 2-away/2-away the same position clearly is.
+        let probs = no_gammons(0.55);
+        assert!(!CubeInfo::from(&probs).double());
+        assert!(at_match(0.55, 2, 2, false).double());
+    }
+
+    #[test]
+    fn match_opponent_owning_cube_forbids_double() {
+        // `x` may not double when the opponent owns the cube, even in a match.
+        let cube = CubeState {
+            position: CubePosition::OpponentOwned,
+            value: 2,
+        };
+        let info = CubeInfo::for_match(&no_gammons(0.80), cube, 5, 5, false);
+        assert!(!info.double());
+        assert!(!info.accept());
     }
 }

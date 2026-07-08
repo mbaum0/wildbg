@@ -4,7 +4,7 @@ use engine::evaluator::Evaluator;
 use engine::position::Position;
 use hyper::StatusCode;
 use logic::bg_move::{BgMove, MoveDetail};
-use logic::cube::{CubeInfo, CubePosition};
+use logic::cube::{CubeInfo, CubePosition, CubeState, MatchState};
 use logic::wildbg_api::{ScoreConfig, WildbgApi};
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
@@ -32,14 +32,16 @@ impl<T: Evaluator> WebApi<T> {
     pub fn get_eval(
         &self,
         pip_params: PipParams,
+        away_params: AwayParams,
         cube_params: CubeParams,
     ) -> Result<EvalResponse, (StatusCode, String)> {
+        let bad_request = |error: &'static str| (StatusCode::BAD_REQUEST, error.to_string());
         let position = Position::try_from(pip_params)
             .map_err(|error| (StatusCode::BAD_REQUEST, error.to_string()))?;
-        let cube_position = CubePosition::try_from(cube_params)
-            .map_err(|error| (StatusCode::BAD_REQUEST, error.to_string()))?;
+        let cube_state = CubeState::try_from(&cube_params).map_err(bad_request)?;
+        let match_state = match_state(&away_params, &cube_params).map_err(bad_request)?;
         let evaluation = self.wildbg.probabilities(&position);
-        let cube = CubeInfo::new(&evaluation, cube_position);
+        let cube = CubeInfo::for_state(&evaluation, cube_state, match_state);
         let probabilities = ProbabilitiesView::from(evaluation);
         Ok(EvalResponse {
             cube,
@@ -281,18 +283,47 @@ pub struct CubeParams {
     /// `opponent` (the opponent owns the cube; `x` may not double).
     #[param(example = "centered")]
     cube_position: Option<String>,
+    /// Current value of the doubling cube (1, 2, 4, …). Defaults to 1.
+    /// Only relevant for match play; a money game is linear.
+    #[param(minimum = 1, example = 1)]
+    cube_value: Option<u32>,
+    /// Whether the current game is the Crawford game (match play only). Defaults to `false`.
+    /// During the Crawford game the cube may not be used.
+    crawford: Option<bool>,
 }
 
-impl TryFrom<CubeParams> for CubePosition {
+impl TryFrom<&CubeParams> for CubeState {
     type Error = &'static str;
 
-    fn try_from(params: CubeParams) -> Result<Self, Self::Error> {
-        match params.cube_position.as_deref() {
-            None | Some("centered") => Ok(CubePosition::Centered),
-            Some("owned") => Ok(CubePosition::Owned),
-            Some("opponent") => Ok(CubePosition::OpponentOwned),
-            Some(_) => Err("cube_position must be one of: centered, owned, opponent"),
+    fn try_from(params: &CubeParams) -> Result<Self, Self::Error> {
+        let position = match params.cube_position.as_deref() {
+            None | Some("centered") => CubePosition::Centered,
+            Some("owned") => CubePosition::Owned,
+            Some("opponent") => CubePosition::OpponentOwned,
+            Some(_) => return Err("cube_position must be one of: centered, owned, opponent"),
+        };
+        let value = params.cube_value.unwrap_or(1);
+        if value == 0 || !value.is_power_of_two() {
+            return Err("cube_value must be a positive power of two: 1, 2, 4, …");
         }
+        Ok(CubeState { position, value })
+    }
+}
+
+/// Builds the scoring context from the away scores and the Crawford flag.
+/// Both away scores `0` (or absent) means a money game.
+fn match_state(away: &AwayParams, cube: &CubeParams) -> Result<MatchState, &'static str> {
+    let x_away = away.x_away.unwrap_or(0);
+    let o_away = away.o_away.unwrap_or(0);
+    let crawford = cube.crawford.unwrap_or(false);
+    match (x_away, o_away) {
+        (0, 0) => Ok(MatchState::Money),
+        (0, _) | (_, 0) => Err("for match play both x_away and o_away must be at least 1"),
+        (x_away, o_away) => Ok(MatchState::Match {
+            x_away,
+            o_away,
+            crawford,
+        }),
     }
 }
 

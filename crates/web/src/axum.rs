@@ -1,4 +1,6 @@
-use crate::web_api::{AwayParams, DiceParams, EvalResponse, MoveResponse, PipParams, WebApi};
+use crate::web_api::{
+    AwayParams, CubeParams, DiceParams, EvalResponse, MoveResponse, PipParams, WebApi,
+};
 use axum::extract::{Query, State};
 use axum::http::StatusCode;
 use axum::{Json, Router, routing::get};
@@ -55,7 +57,8 @@ impl ErrorMessage {
 
 /// Probabilities and cube decision for a position.
 ///
-/// Parameters are a pair of dice and a position.
+/// Parameters are a position and, optionally, the current cube position.
+/// The cube decision assumes a money game; use `cube_position` to say who owns the cube.
 /// For the position each pip with checkers on it has to be specified via the parameters `p0` through `p25`; pips without checkers can be skipped.
 /// We always move from pip 24 to pip 1, so `p1` to `p6` represent the player's (`x`) home board.
 ///
@@ -68,6 +71,7 @@ impl ErrorMessage {
     path = "/eval",
     tag = "endpoints",
     params(
+        CubeParams,
         PipParams,
     ),
     responses(
@@ -98,6 +102,7 @@ impl ErrorMessage {
     )
 )]
 async fn get_eval<T: Evaluator>(
+    Query(cube): Query<CubeParams>,
     Query(pips): Query<PipParams>,
     State(web_api): State<DynWebApi<T>>,
 ) -> Result<Json<EvalResponse>, (StatusCode, Json<ErrorMessage>)> {
@@ -106,7 +111,7 @@ async fn get_eval<T: Evaluator>(
             StatusCode::INTERNAL_SERVER_ERROR,
             ErrorMessage::json("Neural net could not be constructed."),
         )),
-        Some(web_api) => match web_api.get_eval(pips) {
+        Some(web_api) => match web_api.get_eval(pips, cube) {
             Err((status_code, message)) => Err((status_code, ErrorMessage::json(message.as_str()))),
             Ok(eval_response) => Ok(Json(eval_response)),
         },
@@ -268,6 +273,60 @@ mod tests {
             body,
             r#"{"cube":{"double":false,"accept":true,"cubelessEquity":-0.23529412,"equityNoDouble":-0.31764716,"equityDoubleTake":-0.8627452},"probabilities":{"win":0.4117647,"winG":0.05882353,"winBg":0.029411765,"loseG":0.11764706,"loseBg":0.029411765}}"#
         );
+    }
+
+    #[tokio::test]
+    async fn get_eval_with_cube_position() {
+        let web_api = Arc::new(Some(WebApi::new(evaluator_fake())));
+
+        // Same position, once with a centered cube (default) and once with the opponent owning it.
+        let centered = body_string(
+            router(web_api.clone())
+                .oneshot(
+                    Request::builder()
+                        .uri("/eval?p1=1&p20=-1&p24=-1")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap(),
+        )
+        .await;
+
+        let response = router(web_api)
+            .oneshot(
+                Request::builder()
+                    .uri("/eval?p1=1&p20=-1&p24=-1&cube_position=opponent")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let opponent = body_string(response).await;
+
+        // The cube position must actually change the reported cube equities.
+        assert_ne!(centered, opponent);
+        // When the opponent owns the cube, the player may not double.
+        assert!(opponent.contains(r#""double":false"#));
+    }
+
+    #[tokio::test]
+    async fn get_eval_invalid_cube_position() {
+        let web_api = Arc::new(Some(WebApi::new(evaluator_fake())));
+        let response = router(web_api)
+            .oneshot(
+                Request::builder()
+                    .uri("/eval?p1=1&p20=-1&p24=-1&cube_position=bogus")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let body = body_string(response).await;
+        assert!(body.contains("cube_position must be one of"));
     }
 
     #[tokio::test]

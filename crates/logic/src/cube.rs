@@ -9,15 +9,28 @@ use utoipa::ToSchema;
 /// `2/3` is Janowski's recommended value for a typical money game.
 const CUBE_EFFICIENCY: f32 = 2.0 / 3.0;
 
+/// Who currently owns the doubling cube, seen from player `x`'s perspective.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum CubePosition {
+    /// The cube is in the middle; either player may double. This is the state
+    /// before anyone has doubled and the default assumed for an initial double.
+    #[default]
+    Centered,
+    /// Player `x` owns the cube and is the only one who may (re)double.
+    Owned,
+    /// The opponent owns the cube; player `x` may not double.
+    OpponentOwned,
+}
+
 #[cfg_attr(feature = "web", derive(Serialize, ToSchema))]
 #[cfg_attr(feature = "web", serde(rename_all = "camelCase"))]
 /// Money game cube decisions based on Janowski's cube formulae.
 ///
 /// See <https://bkgm.com/articles/Janowski/cubeformulae.pdf>.
 ///
-/// As the API currently carries no information about cube ownership or match
-/// score, all values assume a money game with a centered cube (an initial
-/// double decision). Match play and cube ownership are future extensions.
+/// The decisions assume a money game. Cube ownership is taken into account via
+/// [`CubePosition`]: when the opponent owns the cube, player `x` may not double
+/// and both `double` and `accept` are `false`. Match play is a future extension.
 pub struct CubeInfo {
     /// `true` if the player `x` should double, `false` if no double yet or too good.
     double: bool,
@@ -25,15 +38,17 @@ pub struct CubeInfo {
     accept: bool,
     /// Cubeless money game equity of the position, from player `x`'s perspective.
     cubeless_equity: f32,
-    /// Cubeful equity if player `x` does not double (centered cube), from `x`'s perspective.
+    /// Cubeful equity if player `x` does not double, from `x`'s perspective.
+    /// This depends on the current cube position.
     equity_no_double: f32,
     /// Cubeful equity if player `x` doubles and the opponent takes, from `x`'s perspective.
     /// The stake is already doubled, so this is comparable to the other equities.
     equity_double_take: f32,
 }
 
-impl From<&Probabilities> for CubeInfo {
-    fn from(value: &Probabilities) -> Self {
+impl CubeInfo {
+    /// Computes the cube decision for the given probabilities and cube position.
+    pub fn new(value: &Probabilities, cube_position: CubePosition) -> Self {
         let x = CUBE_EFFICIENCY;
 
         // Probability of winning and losing (cubeless).
@@ -54,22 +69,35 @@ impl From<&Probabilities> for CubeInfo {
             0.0
         };
 
-        // Janowski's cubeful equities from `x`'s perspective for a cube of value 1.
+        // Janowski's cubeful equities from `x`'s perspective for a cube of value 1,
+        // one for each possible cube position.
         let common = p * (w + l + 0.5 * x) - l;
         // Centered cube: neither player has doubled yet.
-        let equity_no_double = (4.0 / (4.0 - x)) * (common - 0.25 * x);
-        // Opponent owns the cube after `x` doubles and the opponent takes.
-        let equity_opponent_owns = common - 0.5 * x;
-        // After a double and take the stake is doubled.
-        let equity_double_take = 2.0 * equity_opponent_owns;
+        let equity_centered = (4.0 / (4.0 - x)) * (common - 0.25 * x);
+        // Player `x` owns the cube.
+        let equity_owned = common;
+        // The opponent owns the cube (also the state after `x` doubles and it is taken).
+        let equity_opponent_owned = common - 0.5 * x;
+
+        // Equity if `x` does not double, depending on who owns the cube.
+        let equity_no_double = match cube_position {
+            CubePosition::Centered => equity_centered,
+            CubePosition::Owned => equity_owned,
+            CubePosition::OpponentOwned => equity_opponent_owned,
+        };
+        // After a double and take the opponent owns the cube and the stake is doubled.
+        let equity_double_take = 2.0 * equity_opponent_owned;
+
+        // `x` can only offer a double when holding a centered cube or owning it.
+        let can_double = matches!(cube_position, CubePosition::Centered | CubePosition::Owned);
 
         // The opponent takes when doing so is better for them than dropping.
         // Dropping costs them the current stake (`x`'s equity would be +1.0).
-        let accept = equity_double_take < 1.0;
+        let accept = can_double && equity_double_take < 1.0;
         // `x` doubles when doubling – after the opponent's best response of
-        // take or drop – beats keeping the cube in the center. Positions that
-        // are "too good" to double yield `equity_no_double > 1.0` and thus `false`.
-        let double = equity_double_take.min(1.0) > equity_no_double;
+        // take or drop – beats not doubling. Positions that are "too good" to
+        // double yield `equity_no_double > 1.0` and thus `false`.
+        let double = can_double && equity_double_take.min(1.0) > equity_no_double;
 
         Self {
             double,
@@ -78,6 +106,13 @@ impl From<&Probabilities> for CubeInfo {
             equity_no_double,
             equity_double_take,
         }
+    }
+}
+
+impl From<&Probabilities> for CubeInfo {
+    /// Cube decision for a centered cube, i.e. an initial double decision.
+    fn from(value: &Probabilities) -> Self {
+        Self::new(value, CubePosition::Centered)
     }
 }
 
@@ -101,7 +136,7 @@ impl CubeInfo {
 
 #[cfg(test)]
 mod tests {
-    use super::CubeInfo;
+    use super::{CubeInfo, CubePosition};
     use engine::probabilities::Probabilities;
 
     /// Helper for a position without gammons or backgammons and a given win probability.
@@ -170,5 +205,44 @@ mod tests {
         // Then the player is too good to double (playing on beats cashing).
         assert!(cube.equity_no_double() > 1.0);
         assert!(!cube.double());
+    }
+
+    #[test]
+    fn from_probabilities_defaults_to_centered() {
+        // `From<&Probabilities>` should behave like an initial double decision.
+        let probs = no_gammons(0.70);
+        let from = CubeInfo::from(&probs);
+        let centered = CubeInfo::new(&probs, CubePosition::Centered);
+        assert_eq!(from.double(), centered.double());
+        assert_eq!(from.accept(), centered.accept());
+        assert_eq!(from.equity_no_double(), centered.equity_no_double());
+    }
+
+    #[test]
+    fn redouble_needs_more_than_initial_double() {
+        // Owning the cube is worth something, so a position that is a clear
+        // initial double may not yet be worth redoubling: the "no double"
+        // baseline is higher when you already own the cube.
+        let probs = no_gammons(0.68);
+        let centered = CubeInfo::new(&probs, CubePosition::Centered);
+        let owned = CubeInfo::new(&probs, CubePosition::Owned);
+        // Same take offer either way (opponent ends up owning the cube).
+        assert_eq!(centered.equity_double_take(), owned.equity_double_take());
+        // But owning the cube raises the "no double" equity above the centered one.
+        assert!(owned.equity_no_double() > centered.equity_no_double());
+        // At this win rate it is an initial double but not yet a redouble.
+        assert!(centered.double());
+        assert!(!owned.double());
+    }
+
+    #[test]
+    fn cannot_double_when_opponent_owns_cube() {
+        // Even with a commanding lead, `x` may not double if the opponent owns the cube.
+        let cube = CubeInfo::new(&no_gammons(0.80), CubePosition::OpponentOwned);
+        assert!(!cube.double());
+        assert!(!cube.accept());
+        // The no-double equity reflects the opponent owning the cube.
+        let expected = CubeInfo::new(&no_gammons(0.80), CubePosition::Centered);
+        assert!(cube.equity_no_double() < expected.equity_no_double());
     }
 }

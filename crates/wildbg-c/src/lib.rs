@@ -21,8 +21,8 @@ pub struct Wildbg {
 
 /// Configuration needed for the evaluation of positions.
 ///
-/// For checker play (`best_move`) currently only 1 pointers and money game are supported.
-/// The cube decision (`cube_info`) supports arbitrary match scores.
+/// Both checker play (`best_move`) and the cube decision (`cube_info`) support
+/// money game (`x_away == 0 && o_away == 0`) and arbitrary match scores.
 #[repr(C)]
 pub struct BgConfig {
     /// Number of points the player on turn needs to finish the match. Zero indicates money game.

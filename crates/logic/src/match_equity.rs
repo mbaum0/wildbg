@@ -10,6 +10,8 @@
 //! entries where either player is one point away already assume the Crawford
 //! game (no doubling). The table is complementary: `M[i][j] + M[j][i] == 100`.
 
+use engine::probabilities::Probabilities;
+
 /// Highest away-score the table covers. Larger scores are clamped to this.
 pub const MAX_AWAY: u32 = 15;
 
@@ -70,9 +72,30 @@ pub fn match_equity_after_loss(x_away: u32, o_away: u32, points: u32) -> f32 {
     }
 }
 
+/// Expected match-winning probability for player `x` of playing the game out to
+/// conclusion at the given `cube_value`, summed over the cubeless
+/// win/gammon/backgammon distribution. A win of `k` points moves the score by
+/// `k`; points that clinch the match are capped. This is a cubeless match
+/// evaluation, used both to rank moves and as a building block for the cube.
+///
+/// It is symmetric under switching sides (`equity(switch(p)) == 1 - equity(p)`),
+/// which is required for correct move ranking from either player's perspective.
+pub fn position_equity(probs: &Probabilities, x_away: u32, o_away: u32, cube_value: u32) -> f32 {
+    let c = cube_value;
+    probs.win_normal * match_equity_after_win(x_away, o_away, c)
+        + probs.win_gammon * match_equity_after_win(x_away, o_away, 2 * c)
+        + probs.win_bg * match_equity_after_win(x_away, o_away, 3 * c)
+        + probs.lose_normal * match_equity_after_loss(x_away, o_away, c)
+        + probs.lose_gammon * match_equity_after_loss(x_away, o_away, 2 * c)
+        + probs.lose_bg * match_equity_after_loss(x_away, o_away, 3 * c)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{MAX_AWAY, match_equity, match_equity_after_loss, match_equity_after_win};
+    use super::{
+        MAX_AWAY, match_equity, match_equity_after_loss, match_equity_after_win, position_equity,
+    };
+    use engine::probabilities::Probabilities;
 
     #[test]
     fn even_score_is_fifty_fifty() {
@@ -137,5 +160,66 @@ mod tests {
     fn losing_enough_points_loses_the_match() {
         assert_eq!(match_equity_after_loss(5, 2, 2), 0.0);
         assert_eq!(match_equity_after_loss(5, 2, 1), match_equity(5, 1));
+    }
+
+    fn switch_sides(p: &Probabilities) -> Probabilities {
+        Probabilities {
+            win_normal: p.lose_normal,
+            win_gammon: p.lose_gammon,
+            win_bg: p.lose_bg,
+            lose_normal: p.win_normal,
+            lose_gammon: p.win_gammon,
+            lose_bg: p.win_bg,
+        }
+    }
+
+    #[test]
+    fn position_equity_is_antisymmetric_under_switch() {
+        // The opponent's match-winning probability (their probs, their away
+        // scores) must be exactly 1 minus ours. This is what makes move ranking
+        // correct from either player's perspective.
+        let p = Probabilities {
+            win_normal: 0.25,
+            win_gammon: 0.15,
+            win_bg: 0.05,
+            lose_normal: 0.35,
+            lose_gammon: 0.1,
+            lose_bg: 0.1,
+        };
+        for x_away in 1..=6 {
+            for o_away in 1..=6 {
+                let ours = position_equity(&p, x_away, o_away, 1);
+                let theirs = position_equity(&switch_sides(&p), o_away, x_away, 1);
+                assert!((ours + theirs - 1.0).abs() < 1e-6);
+            }
+        }
+    }
+
+    #[test]
+    fn match_ranking_can_differ_from_money() {
+        // `a` wins fewer games but more of them are gammons, and it avoids a
+        // gammon loss; `b` wins more games, all single, with a plain loss.
+        let a = Probabilities {
+            win_normal: 0.2,
+            win_gammon: 0.4,
+            win_bg: 0.0,
+            lose_normal: 0.3,
+            lose_gammon: 0.1,
+            lose_bg: 0.0,
+        };
+        let b = Probabilities {
+            win_normal: 0.6,
+            win_gammon: 0.0,
+            win_bg: 0.0,
+            lose_normal: 0.4,
+            lose_gammon: 0.0,
+            lose_bg: 0.0,
+        };
+        // Money game values the gammons, so it prefers `a`.
+        assert!(a.equity() > b.equity());
+        // At 1-away/5-away a single win already wins the match, so the win
+        // gammons are worthless; `b` wins more often and loses smaller, so match
+        // play prefers `b` — the opposite ranking.
+        assert!(position_equity(&b, 1, 5, 1) > position_equity(&a, 1, 5, 1));
     }
 }

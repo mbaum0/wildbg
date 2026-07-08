@@ -1,4 +1,4 @@
-use crate::match_equity::{match_equity_after_loss, match_equity_after_win};
+use crate::match_equity::{match_equity_after_loss, match_equity_after_win, position_equity};
 use engine::probabilities::Probabilities;
 #[cfg(feature = "web")]
 use serde::Serialize;
@@ -64,7 +64,7 @@ fn can_double(position: CubePosition) -> bool {
 #[cfg_attr(feature = "web", derive(Serialize, ToSchema))]
 #[cfg_attr(feature = "web", serde(rename_all = "camelCase"))]
 /// Cube decisions for money game (Janowski's cube formulae) or match play (a
-/// static take-point method on top of a match equity table).
+/// live-cube model with recursive take points on top of a match equity table).
 ///
 /// See <https://bkgm.com/articles/Janowski/cubeformulae.pdf> for the money game.
 ///
@@ -155,9 +155,9 @@ impl CubeInfo {
         )
     }
 
-    /// Match play cube decision using a static take-point method on top of the
-    /// match equity table. `x_away`/`o_away` are how many points each player
-    /// still needs; `crawford` marks the Crawford game.
+    /// Match play cube decision using the live-cube model (recursive live take
+    /// points on top of the match equity table). `x_away`/`o_away` are how many
+    /// points each player still needs; `crawford` marks the Crawford game.
     pub fn for_match(
         value: &Probabilities,
         cube: CubeState,
@@ -167,13 +167,12 @@ impl CubeInfo {
     ) -> Self {
         let cubeless_equity = value.equity();
         let stake = cube.value;
-        // Match-winning probability of just playing on at the current / doubled cube.
-        let equity_no_double = expected_match_equity(value, x_away, o_away, stake);
-        let equity_double_take = expected_match_equity(value, x_away, o_away, 2 * stake);
 
         // During the Crawford game the cube may not be used.
         if crawford {
-            return Self::no_cube(cubeless_equity, equity_no_double, equity_double_take);
+            let e_no_double = position_equity(value, x_away, o_away, stake);
+            let e_double_take = position_equity(value, x_away, o_away, 2 * stake);
+            return Self::no_cube(cubeless_equity, e_no_double, e_double_take);
         }
 
         // Post-Crawford: exactly one player is one point away.
@@ -183,13 +182,24 @@ impl CubeInfo {
                 double,
                 accept,
                 cubeless_equity,
-                equity_no_double,
-                equity_double_take,
+                equity_no_double: position_equity(value, x_away, o_away, stake),
+                equity_double_take: position_equity(value, x_away, o_away, 2 * stake),
             };
         }
 
-        // Pre-Crawford static take-point method. If the opponent passes, `x`
-        // cashes the current stake (`stake` points before the double).
+        // Pre-Crawford: live-cube cubeful equities, differentiated by cube owner.
+        // A centered cube uses the cubeless play-on value as its "no double"
+        // baseline (the conventional static reference for an initial double);
+        // owning the cube adds the value of being able to cash, which correctly
+        // raises the bar for a redouble.
+        let equity_no_double = match cube.position {
+            CubePosition::Centered => position_equity(value, x_away, o_away, stake),
+            CubePosition::Owned => equity_owner_can_cash(value, x_away, o_away, stake),
+            CubePosition::OpponentOwned => equity_opponent_can_cash(value, x_away, o_away, stake),
+        };
+        // If `x` doubles and it is taken, the opponent owns the doubled cube.
+        let equity_double_take = equity_opponent_can_cash(value, x_away, o_away, 2 * stake);
+        // If the opponent passes, `x` cashes the current stake.
         let equity_pass = match_equity_after_win(x_away, o_away, stake);
         Self::decide(
             cubeless_equity,
@@ -239,16 +249,91 @@ impl CubeInfo {
     }
 }
 
-/// Expected match-winning probability for `x` of playing the game out at the
-/// given `stake` (the number of points a plain win is worth), summed over the
-/// cubeless win/gammon/backgammon distribution.
-fn expected_match_equity(value: &Probabilities, x_away: u32, o_away: u32, stake: u32) -> f32 {
-    value.win_normal * match_equity_after_win(x_away, o_away, stake)
-        + value.win_gammon * match_equity_after_win(x_away, o_away, 2 * stake)
-        + value.win_bg * match_equity_after_win(x_away, o_away, 3 * stake)
-        + value.lose_normal * match_equity_after_loss(x_away, o_away, stake)
-        + value.lose_gammon * match_equity_after_loss(x_away, o_away, 2 * stake)
-        + value.lose_bg * match_equity_after_loss(x_away, o_away, 3 * stake)
+/// Match-winning probability for `x` given `x` wins the game, playing at cube
+/// value `v` (gammon-weighted). This is the `p → 1` endpoint of the equity line.
+fn win_equity(value: &Probabilities, a: u32, b: u32, v: u32) -> f32 {
+    let p = value.win();
+    if p <= 0.0 {
+        return 0.0;
+    }
+    (value.win_normal * match_equity_after_win(a, b, v)
+        + value.win_gammon * match_equity_after_win(a, b, 2 * v)
+        + value.win_bg * match_equity_after_win(a, b, 3 * v))
+        / p
+}
+
+/// Match-winning probability for `x` given `x` loses the game, playing at cube
+/// value `v` (gammon-weighted). This is the `p → 0` endpoint of the equity line.
+fn lose_equity(value: &Probabilities, a: u32, b: u32, v: u32) -> f32 {
+    let q = 1.0 - value.win();
+    if q <= 0.0 {
+        return 1.0;
+    }
+    (value.lose_normal * match_equity_after_loss(a, b, v)
+        + value.lose_gammon * match_equity_after_loss(a, b, 2 * v)
+        + value.lose_bg * match_equity_after_loss(a, b, 3 * v))
+        / q
+}
+
+/// Live-cube take point (as a win probability) for the player who needs
+/// `taker_away` points and is being doubled to cube value `cube` against an
+/// opponent who needs `opp_away`. Ignoring gammons, the dead take point comes
+/// straight from the match equity table; the recube option that the taker gains
+/// by owning the cube lowers it via `TP_live(n) = TP_dead(n)·(1 − TP_live(2n))`.
+/// The recursion stops once a single win at the current cube wins the match, so
+/// it self-caps at the finite match and always terminates.
+fn live_take_point(taker_away: u32, opp_away: u32, cube: u32) -> f32 {
+    let declined = cube / 2;
+    let pass = match_equity_after_loss(taker_away, opp_away, declined);
+    let win = match_equity_after_win(taker_away, opp_away, cube);
+    let lose = match_equity_after_loss(taker_away, opp_away, cube);
+    let denom = win - lose;
+    let dead = if denom <= 1e-9 {
+        0.0
+    } else {
+        ((pass - lose) / denom).clamp(0.0, 1.0)
+    };
+    if cube >= taker_away {
+        // A single win at this cube already wins the match: no recube value.
+        dead
+    } else {
+        let recube = live_take_point(opp_away, taker_away, 2 * cube);
+        dead * (1.0 - recube)
+    }
+}
+
+/// Cubeful match equity for `x` when the cube (value `v`) is owned by `x`, so
+/// only `x` can (re)double and cash. Piecewise-linear between losing the game and
+/// `x`'s cash point (where the opponent reaches its live take point).
+fn equity_owner_can_cash(value: &Probabilities, a: u32, b: u32, v: u32) -> f32 {
+    let p = value.win();
+    if p >= 1.0 {
+        return win_equity(value, a, b, v);
+    }
+    let cash = match_equity_after_win(a, b, v);
+    let cash_point = (1.0 - live_take_point(b, a, 2 * v)).clamp(0.0, 1.0);
+    if p >= cash_point || cash_point <= 0.0 {
+        return cash;
+    }
+    let lose = lose_equity(value, a, b, v);
+    lose + (cash - lose) * (p / cash_point)
+}
+
+/// Cubeful match equity for `x` when the cube (value `v`) is owned by the
+/// opponent, so only the opponent can (re)double and cash. Piecewise-linear
+/// between the opponent cashing (at `x`'s live take point) and `x` winning.
+fn equity_opponent_can_cash(value: &Probabilities, a: u32, b: u32, v: u32) -> f32 {
+    let p = value.win();
+    if p <= 0.0 {
+        return lose_equity(value, a, b, v);
+    }
+    let anti_cash = match_equity_after_loss(a, b, v);
+    let take_point = live_take_point(a, b, 2 * v).clamp(0.0, 1.0);
+    if p <= take_point {
+        return anti_cash;
+    }
+    let win = win_equity(value, a, b, v);
+    anti_cash + (win - anti_cash) * (p - take_point) / (1.0 - take_point)
 }
 
 /// Cube decision in a post-Crawford game, where exactly one player is one point
@@ -492,5 +577,31 @@ mod tests {
         let info = CubeInfo::for_match(&no_gammons(0.80), cube, 5, 5, false);
         assert!(!info.double());
         assert!(!info.accept());
+    }
+
+    #[test]
+    fn match_cube_ownership_is_differentiated() {
+        // Unlike the old static method, owning the cube is worth more than a
+        // centered cube, which is worth more than the opponent owning it.
+        let probs = no_gammons(0.60);
+        let no_double = |position| {
+            CubeInfo::for_match(&probs, CubeState { position, value: 1 }, 5, 5, false)
+                .equity_no_double()
+        };
+        assert!(no_double(CubePosition::Owned) > no_double(CubePosition::Centered));
+        assert!(no_double(CubePosition::Centered) > no_double(CubePosition::OpponentOwned));
+    }
+
+    #[test]
+    fn deep_match_take_point_has_recube_vig() {
+        // Deep in a long match the cube is fully live: the recube option pulls
+        // the take point down from the dead-cube 25% to about the money-game
+        // live value of 20%.
+        let live = super::live_take_point(15, 15, 2);
+        assert!((live - 0.20).abs() < 0.03, "live take point was {live}");
+        assert!(
+            live < 0.25,
+            "recube vig should lower the take point below 25%"
+        );
     }
 }

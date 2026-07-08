@@ -537,4 +537,24 @@ mod tests {
             r#"{"moves":[{"play":[{"from":5,"to":4},{"from":4,"to":3},{"from":3,"to":2},{"from":2,"to":1}],"probabilities":{"win":0.5882353,"winG":0.11764706,"winBg":0.029411765,"loseG":0.05882353,"loseBg":0.029411765}},{"play":[{"from":5,"to":4},{"from":5,"to":4},{"from":4,"to":3},{"from":3,"to":2}],"probabilities":{"win":0.13830847,"winG":0.0019900498,"winBg":0.0009950249,"loseG":0.0009950249,"loseBg":0.0}},{"play":[{"from":5,"to":4},{"from":5,"to":4},{"from":4,"to":3},{"from":4,"to":3}],"probabilities":{"win":0.07676969,"winG":0.001994018,"winBg":0.000997009,"loseG":0.000997009,"loseBg":0.0}}]}"#
         );
     }
+
+    #[tokio::test]
+    async fn get_move_accepts_match_score() {
+        // Arbitrary match scores used to be rejected; now they rank moves by
+        // match-winning probability and must succeed.
+        let web_api = Arc::new(Some(WebApi::new(evaluator_fake())));
+        let response = router(web_api)
+            .oneshot(
+                Request::builder()
+                    .uri("/move?die1=1&die2=1&p5=2&p24=-1&x_away=3&o_away=5")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = body_string(response).await;
+        assert!(body.contains("\"moves\""));
+    }
 }

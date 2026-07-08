@@ -4,7 +4,7 @@ use engine::dice::Dice;
 use engine::position::Position;
 use engine::probabilities::Probabilities;
 use logic::bg_move::{BgMove, MoveDetail};
-use logic::cube::CubeInfo;
+use logic::cube::{CubeInfo, CubePosition};
 use logic::wildbg_api::{ScoreConfig, WildbgApi};
 
 // When this file is changed, recreate the header file by executing this from the project's root:
@@ -214,11 +214,31 @@ pub extern "C" fn probabilities(wildbg: &Wildbg, pips: &[c_int; 26]) -> CProbabi
     }
 }
 
+/// Returns the money game cube decision for a certain position.
+/// If an illegal position is encountered, all values will be zero/false.
+///
+/// `cube_position` describes who currently owns the doubling cube, from the
+/// player on turn's perspective: `0` for a centered cube (an initial double
+/// decision), `1` if the player on turn owns the cube, `-1` if the opponent
+/// owns it. Any other value is treated as a centered cube.
+///
+/// The player on turn always moves from pip 24 to pip 1.
+/// The array `pips` contains the player's bar in index 25, the opponent's bar in index 0.
+/// Checkers of the player on turn are encoded with positive integers, the opponent's checkers with negative integers.
 #[unsafe(no_mangle)]
-pub extern "C" fn cube_info(wildbg: &Wildbg, pips: &[c_int; 26]) -> CCubeInfo {
+pub extern "C" fn cube_info(
+    wildbg: &Wildbg,
+    pips: &[c_int; 26],
+    cube_position: c_int,
+) -> CCubeInfo {
     let pips = pips.map(|pip| pip as i8);
+    let cube_position = match cube_position {
+        1 => CubePosition::Owned,
+        -1 => CubePosition::OpponentOwned,
+        _ => CubePosition::Centered,
+    };
     match Position::try_from(pips) {
-        Ok(position) => (&wildbg.api.cube_info(&position)).into(),
+        Ok(position) => (&wildbg.api.cube_info(&position, cube_position)).into(),
         Err(error) => {
             eprintln!("{error}");
             CCubeInfo::default()

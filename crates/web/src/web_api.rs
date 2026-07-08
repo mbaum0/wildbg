@@ -4,7 +4,7 @@ use engine::evaluator::Evaluator;
 use engine::position::Position;
 use hyper::StatusCode;
 use logic::bg_move::{BgMove, MoveDetail};
-use logic::cube::CubeInfo;
+use logic::cube::{CubeInfo, CubePosition};
 use logic::wildbg_api::{ScoreConfig, WildbgApi};
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
@@ -29,20 +29,22 @@ impl<T: Evaluator> WebApi<T> {
         }
     }
 
-    pub fn get_eval(&self, pip_params: PipParams) -> Result<EvalResponse, (StatusCode, String)> {
-        let position = Position::try_from(pip_params);
-        match position {
-            Err(error) => Err((StatusCode::BAD_REQUEST, error.to_string())),
-            Ok(position) => {
-                let evaluation = self.wildbg.probabilities(&position);
-                let cube = CubeInfo::from(&evaluation);
-                let probabilities = ProbabilitiesView::from(evaluation);
-                Ok(EvalResponse {
-                    cube,
-                    probabilities,
-                })
-            }
-        }
+    pub fn get_eval(
+        &self,
+        pip_params: PipParams,
+        cube_params: CubeParams,
+    ) -> Result<EvalResponse, (StatusCode, String)> {
+        let position = Position::try_from(pip_params)
+            .map_err(|error| (StatusCode::BAD_REQUEST, error.to_string()))?;
+        let cube_position = CubePosition::try_from(cube_params)
+            .map_err(|error| (StatusCode::BAD_REQUEST, error.to_string()))?;
+        let evaluation = self.wildbg.probabilities(&position);
+        let cube = CubeInfo::new(&evaluation, cube_position);
+        let probabilities = ProbabilitiesView::from(evaluation);
+        Ok(EvalResponse {
+            cube,
+            probabilities,
+        })
     }
 
     pub fn get_move(
@@ -267,6 +269,30 @@ impl TryFrom<AwayParams> for ScoreConfig {
         let x_away = params.x_away.unwrap_or_default();
         let o_away = params.o_away.unwrap_or_default();
         Self::try_from((x_away, o_away))
+    }
+}
+
+#[derive(Debug, Deserialize, IntoParams)]
+pub struct CubeParams {
+    /// Who currently owns the doubling cube, from the player `x`'s perspective.
+    ///
+    /// One of `centered` (default; nobody has doubled yet, an initial double decision),
+    /// `owned` (`x` owns the cube and may redouble), or
+    /// `opponent` (the opponent owns the cube; `x` may not double).
+    #[param(example = "centered")]
+    cube_position: Option<String>,
+}
+
+impl TryFrom<CubeParams> for CubePosition {
+    type Error = &'static str;
+
+    fn try_from(params: CubeParams) -> Result<Self, Self::Error> {
+        match params.cube_position.as_deref() {
+            None | Some("centered") => Ok(CubePosition::Centered),
+            Some("owned") => Ok(CubePosition::Owned),
+            Some("opponent") => Ok(CubePosition::OpponentOwned),
+            Some(_) => Err("cube_position must be one of: centered, owned, opponent"),
+        }
     }
 }
 

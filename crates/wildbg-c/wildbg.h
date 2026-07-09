@@ -85,6 +85,23 @@ typedef struct CProbabilities {
 } CProbabilities;
 
 /**
+ * A legal move together with the value it is ranked by. Returned by
+ * `ranked_moves`, best-first.
+ */
+typedef struct CRankedMove {
+  /**
+   * The move itself, in the same encoding as the return value of `best_move`.
+   */
+  struct CMove checker_move;
+  /**
+   * The value the move is ranked by: cubeless win probability for a
+   * 1-pointer, cubeless equity for a money game, and cubeless match-winning
+   * probability for match play. Higher is better.
+   */
+  float value;
+} CRankedMove;
+
+/**
  * Returns the best move for the given position.
  *
  * The player on turn always moves from pip 24 to pip 1.
@@ -136,6 +153,30 @@ struct CCubeInfo cube_info(const struct Wildbg *wildbg,
  */
 struct CProbabilities probabilities(const struct Wildbg *wildbg,
                                     const int (*pips)[26]);
+
+/**
+ * Fills `out` with the legal moves for the given position, ranked best-first,
+ * and returns how many were written (never more than `max_moves`).
+ *
+ * Each entry pairs the move (encoded as in `best_move`) with the value it is
+ * ranked by, so a caller can weaken play by choosing a move whose value is
+ * close to the best instead of always the best one. `out[0]` is the same move
+ * `best_move` would return. Returns `0` and writes nothing for an illegal
+ * position, invalid dice, or `max_moves <= 0`.
+ *
+ * The board and score conventions match `best_move`.
+ *
+ * # Safety
+ * The argument `wildbg` needs to be initialized with `wildbg_new()` and `wildbg_free()` must not be called yet.
+ * `out` must point to at least `max_moves` writable `CRankedMove` values.
+ */
+int ranked_moves(const struct Wildbg *wildbg,
+                 const int (*pips)[26],
+                 unsigned int die1,
+                 unsigned int die2,
+                 const struct BgConfig *config,
+                 struct CRankedMove *out,
+                 int max_moves);
 
 /**
  * # Safety

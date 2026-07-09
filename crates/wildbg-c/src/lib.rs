@@ -160,6 +160,19 @@ impl From<&CubeInfo> for CCubeInfo {
     }
 }
 
+/// A legal move together with the value it is ranked by. Returned by
+/// `ranked_moves`, best-first.
+#[repr(C)]
+#[derive(Default)]
+pub struct CRankedMove {
+    /// The move itself, in the same encoding as the return value of `best_move`.
+    pub checker_move: CMove,
+    /// The value the move is ranked by: cubeless win probability for a
+    /// 1-pointer, cubeless equity for a money game, and cubeless match-winning
+    /// probability for match play. Higher is better.
+    pub value: c_float,
+}
+
 type Error = &'static str;
 
 /// Returns the best move for the given position.
@@ -194,6 +207,65 @@ pub unsafe extern "C" fn best_move(
         Err(error) => {
             eprintln!("{error}");
             CMove::default()
+        }
+    }
+}
+
+/// Fills `out` with the legal moves for the given position, ranked best-first,
+/// and returns how many were written (never more than `max_moves`).
+///
+/// Each entry pairs the move (encoded as in `best_move`) with the value it is
+/// ranked by, so a caller can weaken play by choosing a move whose value is
+/// close to the best instead of always the best one. `out[0]` is the same move
+/// `best_move` would return. Returns `0` and writes nothing for an illegal
+/// position, invalid dice, or `max_moves <= 0`.
+///
+/// The board and score conventions match `best_move`.
+///
+/// # Safety
+/// The argument `wildbg` needs to be initialized with `wildbg_new()` and `wildbg_free()` must not be called yet.
+/// `out` must point to at least `max_moves` writable `CRankedMove` values.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ranked_moves(
+    wildbg: *const Wildbg,
+    pips: &[c_int; 26],
+    die1: c_uint,
+    die2: c_uint,
+    config: &BgConfig,
+    out: *mut CRankedMove,
+    max_moves: c_int,
+) -> c_int {
+    if out.is_null() || max_moves <= 0 {
+        return 0;
+    }
+    let pips = pips.map(|pip| pip as i8);
+    let ranked = || -> Result<Vec<CRankedMove>, Error> {
+        let position = Position::try_from(pips)?;
+        let dice = Dice::try_from((die1 as usize, die2 as usize))?;
+        let score_config = ScoreConfig::try_from((config.x_away, config.o_away))?;
+        let value = score_config.value();
+        // Unlike `best_position`, `all_moves` already returns each position from
+        // the mover's perspective, so no `sides_switched()` is needed here.
+        let moves = unsafe { (*wildbg).api.all_moves(&position, &dice, &score_config) }
+            .into_iter()
+            .map(|(new_position, probabilities)| CRankedMove {
+                checker_move: CMove::from(BgMove::new(&position, &new_position, &dice)),
+                value: value(&probabilities),
+            })
+            .collect();
+        Ok(moves)
+    };
+    match ranked() {
+        Ok(moves) => {
+            let count = moves.len().min(max_moves as usize);
+            for (i, ranked_move) in moves.into_iter().take(count).enumerate() {
+                unsafe { out.add(i).write(ranked_move) };
+            }
+            count as c_int
+        }
+        Err(error) => {
+            eprintln!("{error}");
+            0
         }
     }
 }
@@ -267,7 +339,10 @@ pub extern "C" fn cube_info(
 
 #[cfg(test)]
 mod tests {
-    use crate::{BgConfig, CCubeInfo, CMove, CMoveDetail, CProbabilities, best_move, wildbg_new};
+    use crate::{
+        BgConfig, CCubeInfo, CMove, CMoveDetail, CProbabilities, CRankedMove, best_move,
+        ranked_moves, wildbg_free, wildbg_new,
+    };
     use engine::position::X_BAR;
     use engine::{dice::Dice, pos};
     use logic::cube::CubeInfo;
@@ -397,6 +472,38 @@ mod tests {
         unsafe {
             let best_move = best_move(wildbg, &pips, die1, die2, &config);
             assert_eq!(best_move, running);
+        }
+    }
+
+    #[test]
+    fn ranked_moves_are_sorted_and_top_is_best_move() {
+        let wildbg = wildbg_new();
+        let pips = [
+            0, 2, 2, 2, 2, 2, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, -2, -2, 0, 0, 0, 0, 1, 0,
+        ];
+        let die1 = 5;
+        let die2 = 4;
+        let config = BgConfig {
+            x_away: 0,
+            o_away: 0,
+            crawford: false,
+        };
+
+        let mut out: [CRankedMove; 64] = std::array::from_fn(|_| CRankedMove::default());
+        let count =
+            unsafe { ranked_moves(wildbg, &pips, die1, die2, &config, out.as_mut_ptr(), 64) };
+
+        // Several legal moves exist, ranked best-first (non-increasing value).
+        assert!(count > 1);
+        for i in 1..count as usize {
+            assert!(out[i - 1].value >= out[i].value);
+        }
+
+        // The top-ranked move is exactly what best_move returns.
+        unsafe {
+            let best = best_move(wildbg, &pips, die1, die2, &config);
+            assert_eq!(out[0].checker_move, best);
+            wildbg_free(wildbg);
         }
     }
 }

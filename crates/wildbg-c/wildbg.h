@@ -52,7 +52,7 @@ typedef struct BgConfig {
 typedef struct CCubeInfo {
   bool should_double;
   bool should_accept;
-  float cubeless_equity;
+  float equity_cubeless;
   float equity_no_double;
   float equity_double_take;
 } CCubeInfo;

@@ -141,7 +141,7 @@ impl From<&MoveDetail> for CMoveDetail {
 pub struct CCubeInfo {
     should_double: bool,
     should_accept: bool,
-    cubeless_equity: f32,
+    equity_cubeless: f32,
     equity_no_double: f32,
     equity_double_take: f32,
 }
@@ -151,7 +151,7 @@ impl From<&CubeInfo> for CCubeInfo {
         Self {
             should_double: value.double(),
             should_accept: value.accept(),
-            cubeless_equity: value.cubeless_equity(),
+            equity_cubeless: value.equity_cubeless(),
             equity_no_double: value.equity_no_double(),
             equity_double_take: value.equity_double_take(),
         }
@@ -247,7 +247,7 @@ mod tests {
         let c_cube: CCubeInfo = (&cube_info).into();
         assert_eq!(c_cube.should_double, cube_info.double());
         assert_eq!(c_cube.should_accept, cube_info.accept());
-        assert_eq!(c_cube.cubeless_equity, cube_info.cubeless_equity());
+        assert_eq!(c_cube.equity_cubeless, cube_info.equity_cubeless());
         assert_eq!(c_cube.equity_no_double, cube_info.equity_no_double());
         assert_eq!(c_cube.equity_double_take, cube_info.equity_double_take());
     }

@@ -24,7 +24,7 @@ pub struct CubeInfo {
     /// `true` if the opponent should take the cube, `false` if they should reject.
     accept: bool,
     /// Cubeless money game equity of the position, from player `x`'s perspective.
-    cubeless_equity: f32,
+    equity_cubeless: f32,
     /// Cubeful equity if player `x` does not double (centered cube), from `x`'s perspective.
     equity_no_double: f32,
     /// Cubeful equity if player `x` doubles and the opponent takes, from `x`'s perspective.
@@ -74,7 +74,7 @@ impl From<&Probabilities> for CubeInfo {
         Self {
             double,
             accept,
-            cubeless_equity: value.equity(),
+            equity_cubeless: value.equity(),
             equity_no_double,
             equity_double_take,
         }
@@ -88,8 +88,8 @@ impl CubeInfo {
     pub fn accept(&self) -> bool {
         self.accept
     }
-    pub fn cubeless_equity(&self) -> f32 {
-        self.cubeless_equity
+    pub fn equity_cubeless(&self) -> f32 {
+        self.equity_cubeless
     }
     pub fn equity_no_double(&self) -> f32 {
         self.equity_no_double
@@ -121,7 +121,7 @@ mod tests {
         // Given a completely symmetric position (50% wins, no gammons)
         let cube = CubeInfo::from(&no_gammons(0.5));
         // Then equities are zero, there is no double and a take is correct.
-        assert!(cube.cubeless_equity().abs() < 1e-6);
+        assert!(cube.equity_cubeless().abs() < 1e-6);
         assert!(cube.equity_no_double().abs() < 1e-6);
         assert!(!cube.double());
         assert!(cube.accept());

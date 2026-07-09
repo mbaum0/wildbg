@@ -76,7 +76,7 @@ impl ErrorMessage {
                 "cube": {
                     "double": true,
                     "accept": true,
-                    "cubelessEquity": 0.3846425,
+                    "equityCubeless": 0.3846425,
                     "equityNoDouble": 0.51224595,
                     "equityDoubleTake": 0.5204099
                 },

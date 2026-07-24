@@ -8,7 +8,7 @@ use crate::inputs::{ContactInputsGen, InputsGen, RaceInputsGen};
 use crate::position::Position;
 use crate::probabilities::Probabilities;
 
-type TractModel = RunnableModel<TypedFact, Box<dyn TypedOp>, Graph<TypedFact, Box<dyn TypedOp>>>;
+type TractModel = Arc<TypedRunnableModel>;
 type Error = String;
 
 mod number_of_models {
@@ -46,7 +46,7 @@ impl<T: InputsGen> BatchEvaluator for OnnxEvaluator<T> {
         let result = self.eval_inputs(inputs);
 
         // Extract all the probabilities from the result:
-        let array_view = result[0].to_array_view::<f32>().unwrap();
+        let array_view = result[0].to_plain_array_view::<f32>().unwrap();
         let probabilities_in_shape = array_view.to_shape((positions.len(), 6)).unwrap();
         let probabilities_iter = probabilities_in_shape.outer_iter().map(|x| Probabilities {
             win_normal: x[0],

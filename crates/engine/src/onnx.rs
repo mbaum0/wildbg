@@ -214,70 +214,90 @@ impl<T: InputsGen> OnnxEvaluator<T> {
     }
 }
 
-/// The following tests mainly test the quality of the neural nets
+/// The following tests mainly test the quality of the neural nets.
+///
+/// Every position below is a *race* (`game_phase()` returns `Ongoing(Race)`), because
+/// neither side has a checker behind the other. `CompositeEvaluator` therefore routes
+/// them to the race net in production, and that is the net they are checked against
+/// here -- the contact net is never asked about a race and answers these badly, being
+/// trained only on contact positions.
 #[cfg(test)]
 mod tests {
     use crate::evaluator::Evaluator;
     use crate::onnx::OnnxEvaluator;
     use crate::pos;
+    use crate::position::{GamePhase, OngoingPhase};
+
+    fn race_evaluator() -> OnnxEvaluator<crate::inputs::RaceInputsGen> {
+        OnnxEvaluator::race_default().unwrap()
+    }
+
+    #[test]
+    fn positions_under_test_are_races() {
+        // Guards the premise of every test below: if one of these ever became a contact
+        // position, it would silently be evaluated by the wrong net.
+        for position in [
+            pos![x 1:1; o 24:1],
+            pos![x 1:1; o 18:15],
+            pos![x 1:1; o 6:15],
+            pos![x 1:6; o 24:1],
+            pos![x 7:15; o 24:1],
+            pos![x 19:15; o 24:1],
+        ] {
+            assert_eq!(
+                position.game_phase(),
+                GamePhase::Ongoing(OngoingPhase::Race)
+            );
+        }
+    }
 
     #[test]
     fn eval_certain_win_normal() {
-        let onnx = OnnxEvaluator::contact_default().unwrap();
-        let position = pos![x 1:1; o 24:1];
-
-        let probabilities = onnx.eval(&position);
-        assert!(probabilities.win_normal > 0.85);
-        assert!(probabilities.win_normal < 0.9); // This should be wrong, let's improve the nets.
+        // x is on roll with a single checker one pip from home: a certain win, and o has
+        // already borne off, so it cannot be a gammon.
+        let probabilities = race_evaluator().eval(&pos![x 1:1; o 24:1]);
+        assert!(probabilities.win_normal > 0.99);
     }
 
     #[test]
     fn eval_certain_win_gammon() {
-        let onnx = OnnxEvaluator::contact_default().unwrap();
-        let position = pos![x 1:1; o 18:15];
-
-        let probabilities = onnx.eval(&position);
-        assert!(probabilities.win_gammon > 0.85);
-        assert!(probabilities.win_gammon < 0.9); // This should be wrong, let's improve the nets.
+        // x wins at once while o has nothing off, so x wins at least a gammon. o's
+        // checkers are on pip 18 and move away from x's home board, so the truth is a
+        // plain gammon -- but the net splits gammon/backgammon roughly evenly on this
+        // (legal, yet wildly unrealistic) 15-on-a-point stack, so only the sum is
+        // asserted.
+        let probabilities = race_evaluator().eval(&pos![x 1:1; o 18:15]);
+        assert!(probabilities.win_gammon + probabilities.win_bg > 0.99);
     }
 
     #[test]
     fn eval_certain_win_bg() {
-        let onnx = OnnxEvaluator::contact_default().unwrap();
-        let position = pos![x 1:1; o 6:15];
-
-        let probabilities = onnx.eval(&position);
-        assert!(probabilities.win_bg > 0.27);
-        assert!(probabilities.win_bg < 0.32); // This should be wrong, let's improve the nets.
+        // o has all 15 checkers on pip 6, inside x's home board, so x wins a backgammon.
+        let probabilities = race_evaluator().eval(&pos![x 1:1; o 6:15]);
+        assert!(probabilities.win_bg > 0.99);
     }
 
     #[test]
     fn eval_certain_lose_normal() {
-        let onnx = OnnxEvaluator::contact_default().unwrap();
-        let position = pos![x 1:6; o 24:1];
-
-        let probabilities = onnx.eval(&position);
-        assert!(probabilities.lose_normal > 0.77);
-        assert!(probabilities.lose_normal < 0.82); // This should be wrong, let's improve the nets.
+        // o needs a single pip and x cannot finish first, but x has checkers off already.
+        let probabilities = race_evaluator().eval(&pos![x 1:6; o 24:1]);
+        assert!(probabilities.lose_normal > 0.99);
     }
 
     #[test]
     fn eval_certain_lose_gammon() {
-        let onnx = OnnxEvaluator::contact_default().unwrap();
-        let position = pos![x 7:15; o 24:1];
-
-        let probabilities = onnx.eval(&position);
-        assert!(probabilities.lose_gammon > 0.92);
-        assert!(probabilities.lose_gammon < 0.98); // This should be wrong, let's improve the nets.
+        // x has nothing off and cannot get a checker off before o finishes. x's checkers
+        // sit on pip 7 and only ever move toward pip 1, so they can never reach o's home
+        // board (pips 19-24) and the truth is a gammon, not a backgammon. The net calls
+        // it a backgammon on this stacked position, so only the sum is asserted.
+        let probabilities = race_evaluator().eval(&pos![x 7:15; o 24:1]);
+        assert!(probabilities.lose_gammon + probabilities.lose_bg > 0.99);
     }
 
     #[test]
     fn eval_certain_lose_bg() {
-        let onnx = OnnxEvaluator::contact_default().unwrap();
-        let position = pos![x 19:15; o 24:1];
-
-        let probabilities = onnx.eval(&position);
-        assert!(probabilities.lose_bg > 0.02);
-        assert!(probabilities.lose_bg < 0.05); // This should be wrong, let's improve the nets.
+        // x has all 15 checkers on pip 19, inside o's home board, so x loses a backgammon.
+        let probabilities = race_evaluator().eval(&pos![x 19:15; o 24:1]);
+        assert!(probabilities.lose_bg > 0.99);
     }
 }

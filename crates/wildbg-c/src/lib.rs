@@ -220,6 +220,13 @@ pub unsafe extern "C" fn best_move(
 /// `best_move` would return. Returns `0` and writes nothing for an illegal
 /// position, invalid dice, or `max_moves <= 0`.
 ///
+/// In a race, moves of equal value are further ordered by the fewest expected
+/// rolls left to bear off, so `out[0]` finishes a won race as quickly as
+/// possible. Without that, every move in a decided race has the same value --
+/// winning in four rolls and in seven both score one point -- and the pick
+/// between them would be arbitrary. `value` is unaffected and still reports the
+/// ranking value alone, so equal-value moves really do share a `value` here.
+///
 /// The board and score conventions match `best_move`.
 ///
 /// # Safety

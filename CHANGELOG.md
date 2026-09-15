@@ -23,6 +23,37 @@ This means you can reuse the same neural networks between for example 0.2.0 and 
 - Match play cube decisions using a live-cube model (recursive take points, capturing recube vig and cube ownership) on top of Kit Woolsey's match equity table, including Crawford and post-Crawford handling. The `/eval` endpoint gains `x_away`/`o_away`/`crawford`/`cube_value` parameters, and the C `cube_info` function gains a `cube_value` argument and a `BgConfig` (with a new `crawford` field): ([#17](https://github.com/carsten-wenderdel/wildbg/issues/17))
 - Match play checker decisions: `best_move` and the `/move` endpoint now rank moves by match-winning probability (via the match equity table) at arbitrary match scores, instead of always using money game equity: ([#17](https://github.com/carsten-wenderdel/wildbg/issues/17))
 - New C function `ranked_moves` returns every legal move ranked best-first with the value it is ranked by (`CRankedMove`), so callers can weaken play by picking a near-best move without re-evaluating positions themselves. `out[0]` matches `best_move`.
+- In a race, checker play now breaks ties by the fewest expected rolls left to bear off, so a won
+  race is finished promptly instead of dawdling. Ranking by win probability alone is *flat* once a
+  race is decided -- winning in four rolls and winning in seven are both worth one point -- so every
+  legal move scored the same and `sort_unstable_by` picked among them arbitrarily. Equity remains the
+  primary key, so gammon saving still wins wherever it genuinely differs. New module
+  `engine::race` supplies the exact figure from a memoised dynamic program over bear-off positions,
+  cross-checked against `Position::all_positions_after_moving` in its tests; positions with a checker
+  still outside the home board sort behind every bear-off position, ordered by pip count.
+
+### Changed
+
+- Replaced the committed neural nets with far stronger ones from
+  [wildbg-training](https://github.com/carsten-wenderdel/wildbg-training) (`contact.onnx` from
+  `data/0020`, `race.onnx` from `data/0022`). Both are the three-hidden-layer 300/250/200 models,
+  replacing a 202-150-6 contact net and a 186-16-6 race net. Measured over 101,200 duel games with
+  `compare-evaluators`, the new pair wins by **0.465 equity per game**. The input encodings are
+  unchanged (202 contact / 186 race inputs), so this is a pure weights swap.
+
+  `data/0020` is used for contact rather than the newer `data/0021`: the two are statistically
+  indistinguishable in strength (0020 by 0.003 +/- 0.004 equity over 85,700 games), but 0021 fails
+  `player_runs_in_money_game_but_not_in_1ptr` -- it leaves a back checker trapped instead of running
+  it home to save a gammon, and rates that unwinnable position at a 16.9% win probability.
+- The neural-net quality tests in `onnx.rs` now evaluate their positions with the *race* net.
+  Every position they use is a race (`game_phase()` returns `Ongoing(Race)`), so `CompositeEvaluator`
+  routes them to the race net in production; they had been asserting contact-net output on
+  positions the contact net is never asked about and is not trained for. A new test guards that
+  premise. Two of them assert only `gammon + backgammon` rather than the split, which the nets
+  get wrong on 15-checkers-on-one-pip positions.
+- `composite.rs`'s `game_over_ongoing` test now uses a legal position. It had used one with 13
+  checkers borne off while two remained on pip 23, which cannot occur (bearing off requires every
+  checker to be home), so the equity bounds it asserted were reading extrapolated nonsense.
 
 ### Fixed
 

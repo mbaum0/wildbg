@@ -22,6 +22,12 @@ pub trait InputsGen {
     /// A single vector with neural net inputs for all positions. This is useful for batch evaluation.
     ///
     /// The length of the returned vector is `NUM_INPUTS * positions.len()`.
+    // clippy's chunks_exact_to_as_chunks (new in Rust 1.98) suggests
+    // `as_chunks_mut::<Self::NUM_INPUTS>()`, but that does not compile: a trait's
+    // associated const cannot be used as a const generic argument here ("generic
+    // parameters may not be used in const operations"). Nothing to act on, so allow it.
+    #[allow(unknown_lints)] // the lint below does not exist before Rust 1.98
+    #[allow(clippy::chunks_exact_to_as_chunks)]
     fn inputs_for_all(&self, positions: &[Position]) -> Vec<f32> {
         let mut vec: Vec<f32> = vec![0.; Self::NUM_INPUTS * positions.len()];
 

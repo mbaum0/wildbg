@@ -100,7 +100,7 @@ impl<T: MoveSelector, U: DiceGen> ConcreteFinder<T, U> {
 mod tests {
     use crate::position_finder::diverse_with_evaluator;
     use engine::composite::CompositeEvaluator;
-    use engine::pos;
+    use engine::inputs::expert::ExpertInputs;
     use engine::position::OngoingPhase;
 
     #[test]
@@ -115,8 +115,13 @@ mod tests {
             .unwrap()
             .to_owned();
         // Then
-        // x is still in the starting position, o has some moved pieces.
-        let expected = pos!(x 24:2, 13:5, 8:3, 6:5; o 19:5, 17:4, 12:4, 1:2);
-        assert_eq!(found_position, expected);
+        // x is still in the starting position, o has some moved pieces. Which move o
+        // picks is up to the neural nets, so assert the direction rather than the
+        // exact position: x's pip count is untouched at the starting 167, and o's has
+        // come down. Were the position handed back from the wrong side, these two
+        // would be the other way round.
+        const STARTING_PIP_COUNT: f32 = 167.0;
+        assert_eq!(found_position.pip_count(), STARTING_PIP_COUNT);
+        assert!(found_position.sides_switched().pip_count() < STARTING_PIP_COUNT);
     }
 }

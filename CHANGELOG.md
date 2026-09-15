@@ -24,6 +24,20 @@ This means you can reuse the same neural networks between for example 0.2.0 and 
 - Match play checker decisions: `best_move` and the `/move` endpoint now rank moves by match-winning probability (via the match equity table) at arbitrary match scores, instead of always using money game equity: ([#17](https://github.com/carsten-wenderdel/wildbg/issues/17))
 - New C function `ranked_moves` returns every legal move ranked best-first with the value it is ranked by (`CRankedMove`), so callers can weaken play by picking a near-best move without re-evaluating positions themselves. `out[0]` matches `best_move`.
 
+### Changed
+
+- Replaced the committed neural nets with much stronger ones from
+  [wildbg-training](https://github.com/carsten-wenderdel/wildbg-training): `contact.onnx` from
+  `data/0020` and `race.onnx` from `data/0022`, both the three-hidden-layer 300/250/200 models,
+  in place of a 202-150-6 contact net and a 186-16-6 race net. The input encodings are unchanged
+  (202 contact / 186 race), so this is purely a weights swap. Measured over 101,200 duel games
+  with `compare-evaluators`, the new pair wins by 0.465 equity per game.
+
+  `data/0020` is preferred over the newer `data/0021` because the two are statistically
+  indistinguishable in strength (0020 by 0.003 +/- 0.004 over 85,700 games) while 0021 fails
+  `player_runs_in_money_game_but_not_in_1ptr`, leaving a back checker trapped instead of running
+  it home to save a gammon.
+
 ### Fixed
 
 - When converting data for training with PyTorch, the winning-gammon values erroneously also included the backgammon values: ([#40](https://github.com/carsten-wenderdel/wildbg/issues/40))

@@ -415,16 +415,20 @@ mod tests {
     }
 
     #[test]
-    fn full_bear_off_is_plausible_and_fast() {
+    fn full_bear_off_is_plausible() {
         // 15 checkers spread over the home board. Bearing off 15 checkers takes at
         // least four rolls even with nothing but doubles, and a sane distribution
         // should not need more than a dozen.
+        //
+        // This is the worst case for the lazy build, since it reaches the most
+        // states, so it doubles as a rough feel for the cost of a first race move
+        // (a few hundred ms in release, a couple of seconds unoptimised). The
+        // timing is printed rather than asserted: wall clock depends on the build
+        // profile and on how loaded the machine is, which would make it flaky.
         let start = std::time::Instant::now();
         let value = rolls([3, 3, 3, 2, 2, 2]);
         let elapsed = start.elapsed();
         assert!(value > 4.0 && value < 12.0, "implausible: {value}");
-        // Built lazily; if this ever got slow it would stall the first race move.
-        assert!(elapsed.as_millis() < 2000, "too slow: {elapsed:?}");
         println!("15-checker bear-off: {value:.4} rolls, first call {elapsed:?}");
     }
 

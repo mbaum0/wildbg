@@ -266,8 +266,14 @@ mod tests {
     /// Mirror image of `heavily_winning_position`: x has not moved a single
     /// checker and is stuck far from its home board, while o has almost
     /// finished bearing off. This should be an overwhelming loss for x.
+    ///
+    /// o sits on pip 23, not pip 2. o travels the opposite way to x, so o's home
+    /// board is pips 19-24 and its last checker before finishing is on 23 -- the
+    /// true mirror of x on pip 2. With o on pip 2 the position is unreachable: o
+    /// cannot have borne off 14 checkers while one still sits 23 pips from home,
+    /// so the nets were being asked to extrapolate from an impossible board.
     fn heavily_losing_position() -> Vec<i8> {
-        let position = pos!(x 12:15; o 2:1);
+        let position = pos!(x 12:15; o 23:1);
         let pips: [i8; 26] = position.into();
         pips.to_vec()
     }

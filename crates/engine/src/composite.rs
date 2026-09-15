@@ -227,10 +227,13 @@ mod game_over_tests {
     #[test]
     fn game_over_ongoing() {
         let evaluator = super::CompositeEvaluator::default_tests();
-        let position = pos!(x 1:1; o 2:2).sides_switched();
+        // A legal, dead-even race: both sides still have all 15 checkers on the board, so
+        // nobody has borne off while checkers remain outside the home board. x is on roll
+        // and so is the favourite, but nothing is decided yet.
+        let position = pos!(x 6:3, 5:3, 4:3, 3:2, 2:2, 1:2; o 19:3, 20:3, 21:3, 22:2, 23:2, 24:2);
         let probabilities = evaluator.eval(&position);
-        // The probabilities now come from the onnx evaluator
-        assert!(probabilities.equity() < 0.);
-        assert!(probabilities.equity() > -1.);
+        // The probabilities now come from the onnx evaluator, not the exact game-over path
+        assert!(probabilities.equity() > 0.);
+        assert!(probabilities.equity() < 1.);
     }
 }

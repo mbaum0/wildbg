@@ -82,7 +82,7 @@ impl ErrorMessage {
                 "cube": {
                     "double": true,
                     "accept": true,
-                    "cubelessEquity": 0.3846425,
+                    "equityCubeless": 0.3846425,
                     "equityNoDouble": 0.51224595,
                     "equityDoubleTake": 0.5204099
                 },
@@ -274,7 +274,7 @@ mod tests {
         let body = body_string(response).await;
         assert_eq!(
             body,
-            r#"{"cube":{"double":false,"accept":true,"cubelessEquity":-0.23529412,"equityNoDouble":-0.31764716,"equityDoubleTake":-0.8627452},"probabilities":{"win":0.4117647,"winG":0.05882353,"winBg":0.029411765,"loseG":0.11764706,"loseBg":0.029411765}}"#
+            r#"{"cube":{"double":false,"accept":true,"equityCubeless":-0.23529412,"equityNoDouble":-0.31764716,"equityDoubleTake":-0.8627452},"probabilities":{"win":0.4117647,"winG":0.05882353,"winBg":0.029411765,"loseG":0.11764706,"loseBg":0.029411765}}"#
         );
     }
 

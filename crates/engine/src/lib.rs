@@ -7,3 +7,4 @@ pub mod multiply;
 pub mod onnx;
 pub mod position;
 pub mod probabilities;
+pub mod race;

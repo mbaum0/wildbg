@@ -24,6 +24,17 @@ This means you can reuse the same neural networks between for example 0.2.0 and 
 - Match play checker decisions: `best_move` and the `/move` endpoint now rank moves by match-winning probability (via the match equity table) at arbitrary match scores, instead of always using money game equity: ([#17](https://github.com/carsten-wenderdel/wildbg/issues/17))
 - New C function `ranked_moves` returns every legal move ranked best-first with the value it is ranked by (`CRankedMove`), so callers can weaken play by picking a near-best move without re-evaluating positions themselves. `out[0]` matches `best_move`.
 
+### Added
+
+- In a race, checker play breaks ties by the fewest expected rolls left to bear off, so a won race
+  is finished promptly. Ranking by win probability is flat once a race is decided -- winning in four
+  rolls and in seven both score one point -- so every legal move scored the same and
+  `sort_unstable_by` chose among them arbitrarily. No net can fix this: rollout labels record the six
+  outcome frequencies, never how many rolls a game took. Equity stays the primary key, so gammon
+  saving still decides wherever it genuinely differs, and contact play is untouched. New module
+  `engine::race` supplies the figure exactly, from a memoised dynamic program over bear-off
+  positions whose rules are cross-checked against `Position::all_positions_after_moving`.
+
 ### Changed
 
 - Replaced the committed neural nets with much stronger ones from

@@ -105,7 +105,7 @@ fn can_double(position: CubePosition) -> bool {
 /// `false`. In match play the Crawford and post-Crawford rules are handled too.
 ///
 /// The `equity_*` fields are cubeful equities in points for a money game, but
-/// match-winning probabilities (0..1) for match play; `cubeless_equity` is
+/// match-winning probabilities (0..1) for match play; `equity_cubeless` is
 /// always the money cubeless equity in points.
 pub struct CubeInfo {
     /// `true` if the player `x` should double, `false` if no double yet or too good.
@@ -113,7 +113,7 @@ pub struct CubeInfo {
     /// `true` if the opponent should take the cube, `false` if they should reject.
     accept: bool,
     /// Cubeless money game equity of the position, from player `x`'s perspective.
-    cubeless_equity: f32,
+    equity_cubeless: f32,
     /// Equity if player `x` does not double, from `x`'s perspective.
     /// Depends on the current cube position (and, in match play, the score).
     equity_no_double: f32,
@@ -197,7 +197,7 @@ impl CubeInfo {
         o_away: u32,
         crawford: bool,
     ) -> Self {
-        let cubeless_equity = value.equity();
+        let equity_cubeless = value.equity();
         // Clamp inputs so the take-point recursion always terminates and cannot
         // overflow, whatever a caller passes (`match_equity` clamps aways too).
         let stake = cube.value.clamp(1, MAX_CUBE_VALUE);
@@ -208,7 +208,7 @@ impl CubeInfo {
         if crawford {
             let e_no_double = position_equity(value, x_away, o_away, stake);
             let e_double_take = position_equity(value, x_away, o_away, 2 * stake);
-            return Self::no_cube(cubeless_equity, e_no_double, e_double_take);
+            return Self::no_cube(equity_cubeless, e_no_double, e_double_take);
         }
 
         // Post-Crawford: exactly one player is one point away.
@@ -217,7 +217,7 @@ impl CubeInfo {
             return Self {
                 double,
                 accept,
-                cubeless_equity,
+                equity_cubeless,
                 equity_no_double: position_equity(value, x_away, o_away, stake),
                 equity_double_take: position_equity(value, x_away, o_away, 2 * stake),
             };
@@ -238,7 +238,7 @@ impl CubeInfo {
         // If the opponent passes, `x` cashes the current stake.
         let equity_pass = match_equity_after_win(x_away, o_away, stake);
         Self::decide(
-            cubeless_equity,
+            equity_cubeless,
             equity_no_double,
             equity_pass,
             equity_double_take,
@@ -251,7 +251,7 @@ impl CubeInfo {
     /// and the opponent taking (`equity_double_take`). Works for money game
     /// (points) and match play (match-winning probabilities) alike.
     fn decide(
-        cubeless_equity: f32,
+        equity_cubeless: f32,
         equity_no_double: f32,
         equity_pass: f32,
         equity_double_take: f32,
@@ -267,18 +267,18 @@ impl CubeInfo {
         Self {
             double,
             accept,
-            cubeless_equity,
+            equity_cubeless,
             equity_no_double,
             equity_double_take,
         }
     }
 
     /// A decision where the cube cannot be used (e.g. the Crawford game).
-    fn no_cube(cubeless_equity: f32, equity_no_double: f32, equity_double_take: f32) -> Self {
+    fn no_cube(equity_cubeless: f32, equity_no_double: f32, equity_double_take: f32) -> Self {
         Self {
             double: false,
             accept: false,
-            cubeless_equity,
+            equity_cubeless,
             equity_no_double,
             equity_double_take,
         }
@@ -402,8 +402,8 @@ impl CubeInfo {
     pub fn accept(&self) -> bool {
         self.accept
     }
-    pub fn cubeless_equity(&self) -> f32 {
-        self.cubeless_equity
+    pub fn equity_cubeless(&self) -> f32 {
+        self.equity_cubeless
     }
     pub fn equity_no_double(&self) -> f32 {
         self.equity_no_double
@@ -435,7 +435,7 @@ mod tests {
         // Given a completely symmetric position (50% wins, no gammons)
         let cube = CubeInfo::from(&no_gammons(0.5));
         // Then equities are zero, there is no double and a take is correct.
-        assert!(cube.cubeless_equity().abs() < 1e-6);
+        assert!(cube.equity_cubeless().abs() < 1e-6);
         assert!(cube.equity_no_double().abs() < 1e-6);
         assert!(!cube.double());
         assert!(cube.accept());
